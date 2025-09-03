@@ -1,0 +1,24 @@
+# Node / build
+node_modules/
+npm-debug.log*
+yarn-error.log*
+dist/
+coverage/
+
+# Env & secrets
+.env
+.env.local
+*.dump
+*.sql
+db/pg.dump
+
+# Uploads y artefactos
+uploads/
+var/
+tmp/
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp

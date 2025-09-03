@@ -1,0 +1,30 @@
+require('dotenv').config();
+const express = require('express');
+
+const app = express();
+
+// Middlewares de parsing
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Rutas
+const clientsRoutes = require("./routes/clients");
+app.use("/api", clientsRoutes);
+
+const authRoutes = require("./routes/auth");
+app.use("/api/auth", authRoutes);
+
+// Endpoint de depuración: devuelve lo que recibe
+app.post("/api/_debug_echo", (req, res) => {
+  res.json({ headers: req.headers, body: req.body });
+});
+
+// Healthcheck
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`CRM backend running on port ${PORT}`);
+});

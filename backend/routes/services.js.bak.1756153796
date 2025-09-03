@@ -1,0 +1,77 @@
+const express = require('express');
+const router = express.Router();
+
+// Usa el MISMO pool que el resto del backend:
+const { pool } = require('../db');
+
+/**
+ * GET /api/clients/:id/services
+ * - :id es el id NUMÉRICO de clients.id
+ * - Devuelve columnas en inglés tal como existen en la tabla
+ */
+router.get('/:id/services', async (req, res) => {
+  try {
+    const clientId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(clientId)) {
+      return res.status(400).json({ error: 'id inválido' });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT id, client_id, service_name, description, quantity, unit_price, total, created_at, updated_at
+       FROM services
+       WHERE client_id = $1
+       ORDER BY created_at DESC`,
+      [clientId]
+    );
+    res.json({ items: rows });
+  } catch (e) {
+    console.error('services list error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+/**
+ * POST /api/clients/:id/services
+ * Body acepta ES/EN:
+ *  - service_name | titulo
+ *  - description  | descripcion
+ *  - quantity     | cantidad
+ *  - unit_price   | precio_unitario | precioUnitario
+ */
+router.post('/:id/services', async (req, res) => {
+  try {
+    const clientId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(clientId)) {
+      return res.status(400).json({ error: 'id inválido' });
+    }
+
+    const b = req.body || {};
+    const service_name = b.service_name ?? b.titulo;
+    const description  = (b.description ?? b.descripcion) ?? null;
+
+    const quantity = Number.isFinite(+b.quantity) ? +b.quantity
+                    : (Number.isFinite(+b.cantidad) ? +b.cantidad : 1);
+
+    const unit_price = Number.isFinite(+b.unit_price) ? +b.unit_price
+                      : (Number.isFinite(+b.precio_unitario) ? +b.precio_unitario
+                      : (Number.isFinite(+b.precioUnitario) ? +b.precioUnitario : 0));
+
+    if (!service_name) {
+      return res.status(400).json({ error: 'service_name/titulo es obligatorio' });
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO services (client_id, service_name, description, quantity, unit_price)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, client_id, service_name, description, quantity, unit_price, total, created_at, updated_at`,
+      [clientId, service_name, description, quantity, unit_price]
+    );
+
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    console.error('services create error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+module.exports = router;

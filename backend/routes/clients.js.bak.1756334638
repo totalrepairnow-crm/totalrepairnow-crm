@@ -1,0 +1,66 @@
+const express = require('express');
+const router = express.Router();
+const { pool } = require('../db');
+const { requireAuth } = require('../middleware/auth');
+const { requireRole } = require('../middleware/roles');
+
+// Helpers
+function toInt(v, def) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : def;
+}
+
+// GET /api/clients  (admin, tech)
+router.get('/', requireAuth, requireRole(['admin','tech']), async (req, res) => {
+  try {
+    const page = Math.max(1, toInt(req.query.page, 1));
+    const pageSize = Math.min(100, Math.max(1, toInt(req.query.pageSize, 20)));
+    const q = (req.query.q || '').trim();
+
+    let where = '';
+    const params = [];
+    if (q) {
+      params.push(`%${q.toLowerCase()}%`);
+      where = `WHERE LOWER(empresa) LIKE $${params.length} OR LOWER(email) LIKE $${params.length}`;
+    }
+
+    const totalSql = `SELECT COUNT(*)::int AS n FROM clients ${where}`;
+    const total = (await pool.query(totalSql, params)).rows[0].n;
+
+    const offset = (page - 1) * pageSize;
+    params.push(pageSize, offset);
+    const listSql = `
+      SELECT id, cliente_id, empresa, email, telefono, estado, last_contact_at, created_at, updated_at
+      FROM clients
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT $${params.length-1} OFFSET $${params.length}
+    `;
+    const items = (await pool.query(listSql, params)).rows;
+
+    res.json({ items, page, pageSize, total });
+  } catch (e) {
+    console.error('clients list error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// GET /api/clients/:id  (admin, tech)
+router.get('/:id', requireAuth, requireRole(['admin','tech']), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const isNum = /^\d+$/.test(id);
+    const where = isNum ? 'id = $1' : 'cliente_id = $1';
+    const { rows } = await pool.query(
+      `SELECT id, cliente_id, empresa, email, telefono, estado, last_contact_at, created_at, updated_at
+       FROM clients WHERE ${where} LIMIT 1`, [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+    res.json(rows[0]);
+  } catch (e) {
+    console.error('clients get error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+module.exports = router;

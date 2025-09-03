@@ -1,0 +1,42 @@
+require('dotenv').config();
+const express = require('express');
+const app = express();
+
+// Middlewares
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Rutas
+const clientsRoutes  = require(./routes/clients);
+const authRoutes     = require(./routes/auth);
+const usersRoutes    = require(./routes/users);
+const servicesRoutes = require(./routes/services);
+
+// Montaje de rutas
+app.use(/api/clients, clientsRoutes);    // CRUD clientes
+app.use(/api/clients, servicesRoutes);   // /:id/services + fotos
+app.use(/api/auth, authRoutes);          // login
+app.use(/api/users, usersRoutes);        // admin: gestión de usuarios
+const clientsRoutes   = require('./routes/clients');
+const authRoutes = require('./routes/auth');
+const usersRoutes = require('./routes/users');      = require('./routes/auth');
+const servicesRoutes  = require('./routes/services');
+
+// Montaje de rutas
+app.use('/api/clients', clientsRoutes);    // CRUD de clientes
+app.use('/api/clients', servicesRoutes);   // /:id/services
+app.use('/api/auth', authRoutes);          // login
+app.use('/api/users', usersRoutes);
+
+// (Opcional) Métricas
+try {
+  const metricsRoutes = require('./routes/metrics');
+  app.use('/api/metrics', metricsRoutes);
+} catch (_e) { /* ignore */ }
+
+// Debug & Health
+app.post('/api/_debug_echo', (req, res) => res.json({ headers: req.headers, body: req.body }));
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`CRM backend running on port ${PORT}`));
