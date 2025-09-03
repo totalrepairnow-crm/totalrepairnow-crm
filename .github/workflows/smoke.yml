@@ -2,14 +2,13 @@ name: Smoke API (Cypress)
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"  # cada 6h (ajustable)
+    branches: [ "main" ]
+  workflow_dispatch: {}
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,26 +16,31 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: "18"
 
-      - name: Install Cypress deps
+      - name: Install dependencies (Cypress project)
         working-directory: tests/smoke
-        run: npm ci || npm i
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
       - name: Run smoke against prod
         working-directory: tests/smoke
         env:
-          CYPRESS_BASE_URL: ${{ secrets.BASE_URL }}
-          CYPRESS_ADMIN_USER: ${{ secrets.ADMIN_USER }}
-          CYPRESS_ADMIN_PASS: ${{ secrets.ADMIN_PASS }}
+          CYPRESS_BASE_URL: ${{ secrets.CYPRESS_BASE_URL }}
+          CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
+          CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
         run: npx cypress run --headless
 
+      # Guarda artefactos si falla (screenshots)
       - name: Store screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: cypress-artifacts
-          path: |
-            tests/smoke/cypress/screenshots
-            tests/smoke/cypress/videos
+          name: cypress-screenshots
+          path: tests/smoke/cypress/screenshots
           if-no-files-found: ignore
+
