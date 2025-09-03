@@ -1,24 +1,13 @@
-# Node
 node_modules/
-*.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Env / secretos
-**/.env
-**/.env.local
-**/.env.*.local
-
-# Build artefacts
-frontend/.next/
-frontend/dist/
-frontend/build/
-
-# Cypress artefacts (si hubiese dentro del monorepo)
-cypress/screenshots/
-cypress/videos/
-
-# OS
+pnpm-lock.yaml
+yarn.lock
+.env
+.env.*
+*.sqlite
 .DS_Store
-Thumbs.db
+coverage/
+cypress/videos/
+cypress/screenshots/
+crm_tests/node_modules/
+frontend/node_modules/
