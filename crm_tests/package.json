@@ -1,0 +1,14 @@
+{
+  "name": "crm-smoke-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Smoke tests for CRM API (login, clients, services).",
+  "devDependencies": {
+    "cypress": "^13.6.4"
+  },
+  "scripts": {
+    "test": "cypress run --headless",
+    "test:headed": "cypress run",
+    "open": "cypress open"
+  }
+}
