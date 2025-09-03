@@ -1,0 +1,219 @@
+import React from "react";
+import Modal from "../components/Modal";
+import { Input, Select, Button } from "../components/Controls";
+
+export default function Clients() {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState("");
+  const [q, setQ] = React.useState("");
+  const [status, setStatus] = React.useState("");
+  const [page, setPage] = React.useState(1);
+
+  // Modal crear
+  const [openNew, setOpenNew] = React.useState(false);
+  const [form, setForm] = React.useState({ empresa:"", email:"", telefono:"", estado:"activo" });
+
+  const token = localStorage.getItem("token");
+
+  const fetchList = React.useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const url = new URL("/api/clients", window.location.origin);
+      url.searchParams.set("page", String(page));
+      url.searchParams.set("pageSize", "10");
+      if (q) url.searchParams.set("q", q);
+      if (status) url.searchParams.set("status", status);
+
+      const r = await fetch(url, { headers:{ Authorization:`Bearer ${token}` } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setItems(j.items || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, q, status, token]);
+
+  React.useEffect(()=>{ if(!token){location.href="/login";return;} fetchList(); }, [fetchList]);
+
+  async function createClient(){
+    try{
+      const r = await fetch("/api/clients", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", Authorization:`Bearer ${token}` },
+        body: JSON.stringify(form)
+      });
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      setOpenNew(false);
+      setForm({ empresa:"", email:"", telefono:"", estado:"activo" });
+      fetchList();
+    }catch(e){ alert("Error: " + e.message); }
+  }
+
+  return (
+    <div className="container">
+      <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:10}}>
+        <h2 style={{margin:"16px 0"}}>Clientes</h2>
+        <div className="toolbar">
+          <Input placeholder="Buscar..." value={q} onChange={e=>setQ(e.target.value)} />
+          <Select value={status} onChange={e=>setStatus(e.target.value)}
+                  options={[{value:"", label:"Todos"},{value:"activo",label:"Activo"},{value:"inactivo",label:"Inactivo"}]} />
+          <Button onClick={()=>setPage(1) || fetchList()}>Filtrar</Button>
+          <Button kind="ok" onClick={()=>setOpenNew(true)}>+ Nuevo</Button>
+        </div>
+      </div>
+
+      <div className="card">
+        {loading ? <div className="skel" style={{height:40}}/> :
+        error ? <div className="err">Error: {error}</div> :
+        <div style={{overflowX:"auto"}}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Empresa</th><th>Email</th><th>Teléfono</th><th>Estado</th><th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(it=>(
+                <tr key={it.id}>
+                  <td>{it.id}</td>
+                  <td>{it.empresa}</td>
+                  <td>{it.email || "-"}</td>
+                  <td>{it.telefono || "-"}</td>
+                  <td>{it.estado}</td>
+                  <td>
+                    <Button className="ghost" onClick={()=>location.href=`/services?client=${it.id}`}>Servicios</Button>
+                  </td>
+                </tr>
+              ))}
+              {items.length===0 && <tr><td colSpan="6" style={{color:"var(--muted)", padding:"20px"}}>Sin resultados</td></tr>}
+            </tbody>
+          </table>
+        </div>}
+      </div>
+
+      <div style={{display:"flex", gap:8, justifyContent:"flex-end", marginTop:12}}>
+        <Button className="ghost" onClick={()=>setPage(p=>Math.max(1,p-1))}>Anterior</Button>
+        <Button className="ghost" onClick={()=>setPage(p=>p+1)}>Siguiente</Button>
+      </div>
+
+      <Modal open={openNew} title="Nuevo cliente" onClose={()=>setOpenNew(false)}
+        footer={<>
+          <Button className="ghost" onClick={()=>setOpenNew(false)}>Cancelar</Button>
+          <Button kind="ok" onClick={createClient}>Crear</Button>
+        </>}>
+        <div className="grid">
+          <Input placeholder="Empresa *" value={form.empresa} onChange={e=>setForm(f=>({...f, empresa:e.target.value}))}/>
+          <Input placeholder="Email" value={form.email} onChange={e=>setForm(f=>({...f, email:e.target.value}))}/>
+          <Input placeholder="Teléfono" value={form.telefono} onChange={e=>setForm(f=>({...f, telefono:e.target.value}))}/>
+          <Select value={form.estado} onChange={e=>setForm(f=>({...f, estado:e.target.value}))}
+            options={[{value:"activo",label:"Activo"},{value:"inactivo",label:"Inactivo"}]} />
+        </div>
+      </Modal>
+    </div>
+  );
+}
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { apiFetch } from "../utils/api";
+
+export default function Clients() {
+  const navigate = useNavigate();
+  const [items, setItems] = useState([]);
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pageSize] = useState(10);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  async function load() {
+    setLoading(true); setErr("");
+    try {
+      const r = await apiFetch(`/api/clients?page=${page}&pageSize=${pageSize}&q=${encodeURIComponent(q)}`);
+      const data = await r.json();
+      setItems(data.items || []);
+      setTotal(data.total || 0);
+    } catch (e) {
+      console.error(e);
+      setErr("No se pudieron cargar los clientes");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page]);
+
+  function onSearch(e) {
+    e.preventDefault();
+    setPage(1);
+    load();
+  }
+
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+
+  return (
+    <div className="container">
+      <div className="dash-head">
+        <h1 className="dash-title">Clientes</h1>
+        <div className="spacer" />
+        <button className="btn" onClick={() => navigate("/clients/new")}>+ Nuevo cliente</button>
+      </div>
+
+      <form onSubmit={onSearch} className="card" style={{padding:"12px"}}>
+        <input
+          className="input"
+          placeholder="Buscar por empresa o email…"
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          style={{width: "60%"}}
+        />
+        <button className="btn" type="submit" style={{marginLeft: 12}}>Buscar</button>
+      </form>
+
+      <section className="card">
+        <div className="card-head">
+          <h3>Listado</h3>
+          <div className="muted">Total: {total}</div>
+        </div>
+
+        {loading ? (
+          <div className="skel" />
+        ) : err ? (
+          <div className="alert error">{err}</div>
+        ) : (
+          <>
+            <div className="table">
+              <div className="tr th">
+                <div>ID</div><div>Empresa</div><div>Email</div><div>Teléfono</div><div>Estado</div><div>Acciones</div>
+              </div>
+              {items.map(cl => (
+                <div key={cl.id} className="tr">
+                  <div>{cl.id}</div>
+                  <div>{cl.empresa}</div>
+                  <div>{cl.email || "—"}</div>
+                  <div>{cl.telefono || "—"}</div>
+                  <div>{cl.estado}</div>
+                  <div style={{display:"flex", gap:8}}>
+                    <button className="btn sm" onClick={() => navigate(`/clients/${cl.id}`)}>Ver</button>
+                    <button className="btn sm" onClick={() => navigate(`/clients/${cl.id}/edit`)}>Editar</button>
+                  </div>
+                </div>
+              ))}
+              {items.length === 0 && <div className="empty">No hay clientes</div>}
+            </div>
+
+            <div className="pager">
+              <button className="btn sm" disabled={page<=1} onClick={() => setPage(p => p-1)}>←</button>
+              <span className="muted">Página {page} / {pages}</span>
+              <button className="btn sm" disabled={page>=pages} onClick={() => setPage(p => p+1)}>→</button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}

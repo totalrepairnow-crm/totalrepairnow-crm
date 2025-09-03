@@ -1,0 +1,122 @@
+import React, { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { apiFetch } from "../utils/api";
+
+export default function Clients(){
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const navigate = useNavigate();
+
+  async function load(){
+    setLoading(true);
+    setErr("");
+    try{
+      const url = `/api/clients?page=${page}&pageSize=${pageSize}&q=${encodeURIComponent(q)}`;
+      const data = await apiFetch(url);
+      setItems(Array.isArray(data?.items) ? data.items : []);
+      setTotal(Number(data?.total || 0));
+    }catch(e){
+      console.error("clients list error:", e);
+      if (e?.status === 401) return navigate("/login", { replace: true });
+      setErr("No se pudo cargar la lista de clientes");
+      setItems([]);
+      setTotal(0);
+    }finally{
+      setLoading(false);
+    }
+  }
+
+  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [page, pageSize]);
+
+  function onSearch(e){
+    e.preventDefault();
+    setPage(1);
+    load();
+  }
+
+  return (
+    <div className="container" style={{ backgroundColor: "#fff" }}>
+      <div className="dash-head">
+        <h1 className="dash-title">Clientes</h1>
+        <div className="spacer" />
+        <Link className="btn" to="/clients/new">Nuevo</Link>
+      </div>
+
+      <section className="card">
+        <form onSubmit={onSearch} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input
+            type="text"
+            placeholder="Buscar por empresa o email…"
+            value={q}
+            onChange={e=>setQ(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button className="btn" type="submit">Buscar</button>
+        </form>
+
+        {loading ? (
+          <div className="skel" />
+        ) : err ? (
+          <div className="alert error">{err}</div>
+        ) : (
+          <>
+            <div className="table">
+              <div className="tr th">
+                <div>ID</div>
+                <div>Empresa</div>
+                <div>Email</div>
+                <div>Teléfono</div>
+                <div>Estado</div>
+                <div>Acciones</div>
+              </div>
+              {items.map(c => (
+                <div className="tr" key={c.id}>
+                  <div>{c.id}</div>
+                  <div>{c.empresa}</div>
+                  <div>{c.email || "—"}</div>
+                  <div>{c.telefono || "—"}</div>
+                  <div>{c.estado}</div>
+                  <div>
+                    <Link className="btn small" to={`/clients/${c.id}`}>Ver</Link>
+                    <span style={{ margin: "0 4px" }} />
+                    <Link className="btn secondary small" to={`/clients/${c.id}/edit`}>Editar</Link>
+                  </div>
+                </div>
+              ))}
+              {items.length === 0 && <div className="empty">No hay clientes</div>}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
+              <button
+                className="btn secondary"
+                onClick={()=> setPage(p => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                type="button"
+              >
+                « Anterior
+              </button>
+              <div>Página {page} — Total: {total}</div>
+              <button
+                className="btn secondary"
+                onClick={()=> {
+                  const maxPage = Math.max(1, Math.ceil(total / pageSize));
+                  setPage(p => Math.min(maxPage, p + 1));
+                }}
+                disabled={items.length < pageSize}
+                type="button"
+              >
+                Siguiente »
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+

@@ -1,0 +1,36 @@
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { apiFetch } from "../utils/api";
+
+export default function ClientNew(){
+  const nav = useNavigate();
+  const [form,setForm]=useState({ empresa:"", email:"", telefono:"" });
+  const [saving,setSaving]=useState(false);
+
+  async function handleSubmit(e){
+    e.preventDefault();
+    setSaving(true);
+    try{
+      const res=await apiFetch("/api/clients",{
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify(form)
+      });
+      nav(`/clients/${res.id}`);
+    }catch{ alert("Error al crear cliente"); }
+    finally{ setSaving(false); }
+  }
+
+  return (
+    <div className="container page-white">
+      <h1>Nuevo Cliente</h1>
+      <form onSubmit={handleSubmit} className="form">
+        <label>Empresa<input value={form.empresa} onChange={e=>setForm({...form,empresa:e.target.value})} /></label>
+        <label>Email<input value={form.email} onChange={e=>setForm({...form,email:e.target.value})} /></label>
+        <label>Teléfono<input value={form.telefono} onChange={e=>setForm({...form,telefono:e.target.value})} /></label>
+        <button className="btn" disabled={saving}>Crear</button>
+      </form>
+    </div>
+  );
+}
+

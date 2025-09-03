@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CRM</title>
+  <style id="white-bg-contract">
+    html, body, #root { background-color:#fff !important; background-image:none !important; }
+  </style>
+    <meta name="color-scheme" content="light">
+</head>
+  <body style="background-color:#fff !important; background-image:none !important">
+    <div id="root"></div>
+  </body>
+</html>

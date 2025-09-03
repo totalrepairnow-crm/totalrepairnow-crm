@@ -1,0 +1,103 @@
+import React from "react";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
+
+import Header from "./components/Header";
+import Dashboard from "./pages/Dashboard";
+import Login from "./pages/Login";
+import Clients from "./pages/Clients";
+import ClientNew from "./pages/ClientNew";
+import ClientEdit from "./pages/ClientEdit";
+import ClientDetail from "./pages/ClientDetail";
+
+/* ====== Helpers de ruta ====== */
+function isAuthed() {
+  try {
+    return Boolean(localStorage.getItem("token"));
+  } catch {
+    return false;
+  }
+}
+
+function ProtectedRoute({ children }) {
+  const location = useLocation();
+  return isAuthed()
+    ? children
+    : <Navigate to="/login" replace state={{ from: location }} />;
+}
+
+function PublicOnly({ children }) {
+  return isAuthed()
+    ? <Navigate to="/" replace />
+    : children;
+}
+
+/* ====== App ====== */
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Header />
+      <Routes>
+        {/* Pública */}
+        <Route
+          path="/login"
+          element={
+            <PublicOnly>
+              <Login />
+            </PublicOnly>
+          }
+        />
+
+        {/* Privadas */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients"
+          element={
+            <ProtectedRoute>
+              <Clients />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients/new"
+          element={
+            <ProtectedRoute>
+              <ClientNew />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients/:id"
+          element={
+            <ProtectedRoute>
+              <ClientDetail />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients/:id/edit"
+          element={
+            <ProtectedRoute>
+              <ClientEdit />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Catch-all */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}

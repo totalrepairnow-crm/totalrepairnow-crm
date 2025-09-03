@@ -1,0 +1,16 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: #fff;
+  margin: 0;
+}
+
+.container {
+  background: #fff;
+  min-height: calc(100vh - 64px);
+  box-sizing: border-box;
+}

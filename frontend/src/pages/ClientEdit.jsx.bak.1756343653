@@ -1,0 +1,94 @@
+// src/pages/ClientEdit.jsx
+import React, { useEffect, useState } from 'react';
+import ClientForm from '../components/ClientForm';
+import { getClient, updateClient } from '../lib/api';
+import { useParams } from 'react-router-dom';
+
+export default function ClientEdit() {
+  const { id } = useParams();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+  const [client, setClient] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const c = await getClient(id);
+        if (live) setClient(c);
+      } catch (e) {
+        setErr(e.message || String(e));
+      } finally {
+        if (live) setLoading(false);
+      }
+    })();
+    return () => { live = false; };
+  }, [id]);
+
+  async function handleSubmit(form) {
+    setSaving(true); setErr(null);
+    try {
+      const payload = { ...form };
+      Object.keys(payload).forEach(k => { if (payload[k] === '') payload[k] = null; });
+
+      await updateClient(id, payload);
+      window.location.href = `/clients/${id}`; // vuelve al detalle
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <div className="dash-wrap"><div className="card"><div className="skel" /></div></div>;
+  if (err) return <div className="dash-wrap"><div className="pill" style={{background:'var(--err)'}}>{String(err)}</div></div>;
+
+  return (
+    <div className="dash-wrap">
+      <div className="dash-head">
+        <h2 className="dash-title">Editar cliente</h2>
+      </div>
+      <ClientForm initial={client} onSubmit={handleSubmit} saving={saving} error={err} />
+    </div>
+  );
+}
+import React, { useEffect, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import ClientForm from "../components/ClientForm";
+import { apiFetch } from "../utils/api";
+
+export default function ClientEdit() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [client, setClient] = useState(null);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(()=>{
+    (async ()=>{
+      setLoading(true); setErr("");
+      try {
+        const r = await apiFetch(`/api/clients/${id}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setClient(await r.json());
+      } catch(e) {
+        console.error(e);
+        setErr("No se pudo cargar el cliente");
+      } finally { setLoading(false); }
+    })();
+  },[id]);
+
+  return (
+    <div className="container">
+      <div className="dash-head">
+        <h1 className="dash-title">Editar cliente #{id}</h1>
+      </div>
+      <section className="card">
+        {loading ? <div className="skel" /> :
+         err ? <div className="alert error">{err}</div> :
+         <ClientForm initial={client} onSaved={(c)=> navigate(`/clients/${c.id}`)} />}
+      </section>
+    </div>
+  );
+}
