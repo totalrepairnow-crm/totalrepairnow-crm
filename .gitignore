@@ -1,24 +1,24 @@
-# Node / build
+# Node
 node_modules/
-npm-debug.log*
-yarn-error.log*
-dist/
-coverage/
-
-# Env & secrets
-.env
-.env.local
-*.dump
-*.sql
-db/pg.dump
-
-# Uploads y artefactos
-uploads/
-var/
-tmp/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# OS/editor
+# Env / secretos
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Build artefacts
+frontend/.next/
+frontend/dist/
+frontend/build/
+
+# Cypress artefacts (si hubiese dentro del monorepo)
+cypress/screenshots/
+cypress/videos/
+
+# OS
 .DS_Store
 Thumbs.db
-*.swp
