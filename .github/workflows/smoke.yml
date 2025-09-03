@@ -18,24 +18,18 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Install dependencies (Cypress project)
+      - name: Verify Cypress (npx, sin instalar deps)
         working-directory: tests/smoke
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+        run: npx --yes cypress@13.17.0 verify
 
-      - name: Run smoke against prod
+      - name: Run smoke against prod (npx)
         working-directory: tests/smoke
         env:
           CYPRESS_BASE_URL: ${{ secrets.CYPRESS_BASE_URL }}
           CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
           CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
-        run: npx cypress run --headless
+        run: npx --yes cypress@13.17.0 run --headless
 
-      # Guarda artefactos si falla (screenshots)
       - name: Store screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
