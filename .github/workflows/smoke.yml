@@ -1,17 +1,23 @@
 name: Smoke API (Cypress)
 
 on:
+  # Manual
   workflow_dispatch:
+  # En cada push a main
   push:
     branches: [ main ]
+  # Cron diario (06:00 UTC)
+  schedule:
+    - cron: '0 6 * * *'
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      # Cambia si quieres apuntar a otro entorno
       CYPRESS_BASE_URL: https://crm.totalrepairnow.com
-      # Si ya definiste variables/secrets en Actions, descomenta:
+      # Opcional: define estas en el repo (Settings > Secrets and variables > Actions)
       # CYPRESS_ADMIN_USER: ${{ vars.ADMIN_USER }}
       # CYPRESS_ADMIN_PASS: ${{ secrets.ADMIN_PASS }}
 
@@ -57,6 +63,15 @@ jobs:
       - name: Run smoke against prod
         working-directory: tests/smoke
         run: npx cypress run --headless
+
+      # (Opcional) Notificación Slack si falla (define secret SLACK_WEBHOOK_URL)
+      - name: Notify Slack on failure
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          payload='{"text":"❌ Smoke API (Cypress) FAILED en $GITHUB_REPOSITORY ($GITHUB_RUN_ID)"}'
+          curl -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
 
       - name: Store screenshots on failure
         if: failure()
