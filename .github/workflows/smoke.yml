@@ -16,17 +16,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
+          cache: npm
+          cache-dependency-path: tests/smoke/package-lock.json
 
-      - name: Verify Cypress (npx)
-        run: npx --yes cypress@13.17.0 verify
+      - name: Install dependencies (Cypress project)
+        working-directory: tests/smoke
+        run: npm ci
 
-      - name: Run smoke against prod (npx)
+      - name: Verify Cypress
+        working-directory: tests/smoke
+        run: npx cypress verify
+
+      - name: Run smoke against prod
+        working-directory: tests/smoke
         env:
           CYPRESS_BASE_URL: ${{ vars.CYPRESS_BASE_URL }}
           CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
           CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
-        working-directory: tests/smoke
-        run: npx --yes cypress@13.17.0 run --headless
+        run: npx cypress run --headless
 
       - name: Store screenshots on failure
         if: failure()
