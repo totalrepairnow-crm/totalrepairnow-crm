@@ -1,0 +1,12 @@
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Cypress artefacts
+cypress/videos/
+cypress/screenshots/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
