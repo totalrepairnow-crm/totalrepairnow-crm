@@ -1,34 +1,62 @@
 name: Smoke API (Cypress)
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ "main" ]
-  workflow_dispatch: {}
+    branches: [ main ]
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CYPRESS_BASE_URL: https://crm.totalrepairnow.com
+      # Si ya definiste variables/secrets en Actions, descomenta:
+      # CYPRESS_ADMIN_USER: ${{ vars.ADMIN_USER }}
+      # CYPRESS_ADMIN_PASS: ${{ secrets.ADMIN_PASS }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: |
+            tests/smoke/package-lock.json
 
-      - name: Verify Cypress (npx, sin instalar deps)
-        working-directory: tests/smoke
-        run: npx --yes cypress@13.17.0 verify
+      - name: Verify project layout
+        run: |
+          ls -la
+          test -f tests/smoke/package.json
+          test -f tests/smoke/cypress.config.js
+          test -f tests/smoke/cypress/e2e/smoke.api.cy.js
 
-      - name: Run smoke against prod (npx)
+      - name: Install dependencies (Cypress project)
         working-directory: tests/smoke
-        env:
-          CYPRESS_BASE_URL: ${{ secrets.CYPRESS_BASE_URL }}
-          CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
-          CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
-        run: npx --yes cypress@13.17.0 run --headless
+        run: npm ci --no-audit --no-fund
+
+      - name: Quick health (with retries)
+        run: |
+          for i in {1..5}; do
+            set +e
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$CYPRESS_BASE_URL/api/health")
+            set -e
+            echo "Attempt $i -> /api/health => $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 3
+          done
+          echo "Healthcheck failed after retries"
+          exit 1
+
+      - name: Run smoke against prod
+        working-directory: tests/smoke
+        run: npx cypress run --headless
 
       - name: Store screenshots on failure
         if: failure()
@@ -37,4 +65,3 @@ jobs:
           name: cypress-screenshots
           path: tests/smoke/cypress/screenshots
           if-no-files-found: ignore
-
