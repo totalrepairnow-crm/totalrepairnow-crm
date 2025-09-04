@@ -2,13 +2,8 @@ name: Smoke API (Cypress)
 
 on:
   pull_request:
-    branches: [ "main" ]
-  push:
-    branches: [ "main" ]
+    branches: [ main ]
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   smoke:
@@ -22,19 +17,16 @@ jobs:
         with:
           node-version: 18
 
-      - name: Verify Cypress (npx, no local deps)
+      - name: Verify Cypress (npx)
         run: npx --yes cypress@13.17.0 verify
 
       - name: Run smoke against prod (npx)
         env:
-          CYPRESS_BASE_URL: https://crm.totalrepairnow.com
+          CYPRESS_BASE_URL: ${{ vars.CYPRESS_BASE_URL }}
           CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
           CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
-        run: |
-          npx --yes cypress@13.17.0 run --headless \
-            --project tests/smoke \
-            --config baseUrl=${CYPRESS_BASE_URL} \
-            --spec "tests/smoke/cypress/e2e/smoke.api.cy.js"
+        working-directory: tests/smoke
+        run: npx --yes cypress@13.17.0 run --headless
 
       - name: Store screenshots on failure
         if: failure()
@@ -43,4 +35,3 @@ jobs:
           name: cypress-screenshots
           path: tests/smoke/cypress/screenshots
           if-no-files-found: ignore
-
