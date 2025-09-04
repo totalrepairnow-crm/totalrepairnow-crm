@@ -1,77 +1,32 @@
 name: Smoke API (Cypress)
 
 on:
-  # Manual
-  workflow_dispatch:
-  # En cada push a main
-  push:
+  pull_request:
     branches: [ main ]
-  # Cron diario (06:00 UTC)
-  schedule:
-    - cron: '0 6 * * *'
+  workflow_dispatch:
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      # Cambia si quieres apuntar a otro entorno
-      CYPRESS_BASE_URL: https://crm.totalrepairnow.com
-      # Opcional: define estas en el repo (Settings > Secrets and variables > Actions)
-      # CYPRESS_ADMIN_USER: ${{ vars.ADMIN_USER }}
-      # CYPRESS_ADMIN_PASS: ${{ secrets.ADMIN_PASS }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          submodules: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: |
-            tests/smoke/package-lock.json
+          node-version: 18
 
-      - name: Verify project layout
-        run: |
-          ls -la
-          test -f tests/smoke/package.json
-          test -f tests/smoke/cypress.config.js
-          test -f tests/smoke/cypress/e2e/smoke.api.cy.js
+      - name: Verify Cypress (npx)
+        run: npx --yes cypress@13.17.0 verify
 
-      - name: Install dependencies (Cypress project)
-        working-directory: tests/smoke
-        run: npm ci --no-audit --no-fund
-
-      - name: Quick health (with retries)
-        run: |
-          for i in {1..5}; do
-            set +e
-            code=$(curl -s -o /dev/null -w "%{http_code}" "$CYPRESS_BASE_URL/api/health")
-            set -e
-            echo "Attempt $i -> /api/health => $code"
-            [ "$code" = "200" ] && exit 0
-            sleep 3
-          done
-          echo "Healthcheck failed after retries"
-          exit 1
-
-      - name: Run smoke against prod
-        working-directory: tests/smoke
-        run: npx cypress run --headless
-
-      # (Opcional) Notificación Slack si falla (define secret SLACK_WEBHOOK_URL)
-      - name: Notify Slack on failure
-        if: failure() && env.SLACK_WEBHOOK_URL != ''
+      - name: Run smoke against prod (npx)
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          payload='{"text":"❌ Smoke API (Cypress) FAILED en $GITHUB_REPOSITORY ($GITHUB_RUN_ID)"}'
-          curl -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL" || true
+          CYPRESS_BASE_URL: ${{ vars.CYPRESS_BASE_URL }}
+          CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
+          CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
+        working-directory: tests/smoke
+        run: npx --yes cypress@13.17.0 run --headless
 
       - name: Store screenshots on failure
         if: failure()
