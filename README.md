@@ -1,3 +1,2 @@
 [![Smoke API (Cypress)](https://github.com/totalrepairnow-crm/totalrepairnow-crm/actions/workflows/smoke.yml/badge.svg)](https://github.com/totalrepairnow-crm/totalrepairnow-crm/actions/workflows/smoke.yml)
 
-[![Smoke API (Cypress)](https://github.com/totalrepairnow-crm/totalrepairnow-crm/actions/workflows/smoke.yml/badge.svg)](https://github.com/totalrepairnow-crm/totalrepairnow-crm/actions/workflows/smoke.yml)
