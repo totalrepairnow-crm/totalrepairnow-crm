@@ -1,25 +1,40 @@
-import { getToken, isTokenValid, logoutAndGoLogin } from "./auth";
+// src/utils/api.js
+import { getToken } from './auth';
 
-export async function apiFetch(path, options = {}) {
+const BASE_URL = process.env.REACT_APP_API_URL || '/api';
+
+async function apiFetch(path, opts = {}) {
   const token = getToken();
-  const headers = new Headers(options.headers || {});
-  // Content-Type por defecto si mandamos JSON
-  if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) {
-    headers.set('Content-Type', 'application/json');
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(opts.headers || {}),
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE_URL}${path}`, { ...opts, headers });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const payload = await res.json();
+      msg = payload.error || payload.message || msg;
+    } catch (_e) {}
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
   }
-  if (token) {
-    // Si está vencido, salir de una
-    if (!isTokenValid(token)) {
-      logoutAndGoLogin();
-      // devolvemos una Response 401 ficticia para que el caller no se rompa
-      return new Response(JSON.stringify({error:'token vencido'}), {status:401, headers:{'Content-Type':'application/json'}});
-    }
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const res = await fetch(`/api${path}`, { ...options, headers });
-  if (res.status === 401) {
-    // token no válido en backend
-    logoutAndGoLogin();
-  }
-  return res;
+  // Permitir 204 sin contenido
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
+
+export const api = {
+  get: (p) => apiFetch(p, { method: 'GET' }),
+  post: (p, body) => apiFetch(p, { method: 'POST', body: JSON.stringify(body) }),
+  put: (p, body) => apiFetch(p, { method: 'PUT', body: JSON.stringify(body) }),
+  patch: (p, body) => apiFetch(p, { method: 'PATCH', body: JSON.stringify(body) }),
+  del: (p) => apiFetch(p, { method: 'DELETE' }),
+};
+
+export { apiFetch };
+export default api;

@@ -70,31 +70,27 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// --- POST /api/clients ---
+// POST /api/clients -> crear
 router.post('/', async (req, res) => {
+  const { first_name, last_name, email, phone } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'email es requerido' });
+
   try {
-    const { first_name = null, last_name = null, email, phone = null } = req.body || {};
-    if (!email) return res.status(400).json({ error: 'email is required' });
-
-    // Opcional: validar duplicado por email
-    const dup = await pool.query(`SELECT id FROM clients WHERE email=$1`, [email]);
-    if (dup.rowCount > 0) {
-      return res.status(409).json({ error: 'email already exists' });
-    }
-
-    const ins = await pool.query(
-      `INSERT INTO clients (first_name, last_name, email, phone)
-       VALUES ($1,$2,$3,$4)
+    const { rows } = await pool.query(
+      `INSERT INTO public.clients (first_name, last_name, email, phone)
+       VALUES ($1, $2, $3, $4)
        RETURNING id, first_name, last_name, email, phone, created_at`,
-      [first_name, last_name, email, phone]
+      [first_name ?? null, last_name ?? null, email, phone ?? null]
     );
-    return res.status(201).json(ins.rows[0]);
+    res.status(201).json(rows[0]);
   } catch (err) {
-    console.error('POST /clients error', err);
-    return res.status(500).json({ error: 'Server error' });
+    if (String(err.message || '').includes('unique') || String(err.detail || '').includes('already exists')) {
+      return res.status(409).json({ error: 'email ya existe' });
+    }
+    console.error('[clients][POST /] error:', err);
+    res.status(500).json({ error: 'Error interno' });
   }
 });
-
 
 // PUT /api/clients/:id -> actualizar parcial
 router.put('/:id', async (req, res) => {
@@ -137,51 +133,3 @@ router.delete('/:id', async (req, res) => {
 });
 
 module.exports = router;
-
-// --- GET /api/clients/:id ---
-router.get('/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    // Cliente base
-    const c = await pool.query(
-      `SELECT id, first_name, last_name, email, phone, created_at
-       FROM clients
-       WHERE id=$1`,
-      [id]
-    );
-    if (c.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
-
-    // Extras defensivos (si existen tablas; si no, regresan vacíos)
-    let services = [];
-    try {
-      const s = await pool.query(
-        `SELECT id, title, status, scheduled_at
-         FROM services
-         WHERE client_id=$1
-         ORDER BY scheduled_at DESC
-         LIMIT 20`,
-        [id]
-      );
-      services = s.rows || [];
-    } catch (_) {}
-
-    let invoices = [];
-    try {
-      const i = await pool.query(
-        `SELECT id, amount, status, created_at
-         FROM invoices
-         WHERE client_id=$1
-         ORDER BY created_at DESC
-         LIMIT 20`,
-        [id]
-      );
-      invoices = i.rows || [];
-    } catch (_) {}
-
-    return res.json({ client: c.rows[0], services, invoices });
-  } catch (err) {
-    console.error('GET /clients/:id error', err);
-    return res.status(500).json({ error: 'Server error' });
-  }
-});
-

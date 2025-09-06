@@ -1,3 +1,4 @@
+import './index.css';
 import "./styles/app.css";
 import './styles/theme.css';
 import React from "react";

@@ -514,3 +514,5 @@ h1.page-title {
   object-fit:cover;
   border-radius:8px;
 }
+/* white background sitewide */
+html, body, #root { background:#ffffff; }

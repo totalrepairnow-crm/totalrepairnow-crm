@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { getToken, getUserFromToken, logoutAndGoLogin } from "../utils/auth";
 
 export default function Header(){
-  const nav = useNavigate();
+// const nav = []; // (unused, removed to silence eslint)
   const token = getToken();
   const user = token ? getUserFromToken(token) : null;
   const isLogin = typeof window!=='undefined' && window.location.pathname === '/login';

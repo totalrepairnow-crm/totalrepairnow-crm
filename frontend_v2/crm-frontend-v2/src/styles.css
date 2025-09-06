@@ -21,3 +21,33 @@ nav a.active { background:#f1f5f9; }
 .card .label { color: var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
 .card .big { font-size:28px; font-weight:700; margin-top:6px; }
 .error { color:crimson; }
+
+.container{max-width:1100px;margin:0 auto;padding:16px;}
+.page{padding:16px;}
+.toolbar{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.toolbar h1{margin:0;font-size:20px}
+.toolbar-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+
+.input{border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px}
+
+.btn{border:1px solid transparent;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer}
+.btn-primary{background:#2563eb;color:#fff;border-color:#1d4ed8}
+.btn-primary:hover{background:#1d4ed8}
+.btn-ghost{background:#fff;color:#2563eb;border-color:#2563eb}
+.btn-ghost:hover{background:#f8fafc}
+
+.table-wrap{overflow:auto}
+.table{width:100%;border-collapse:collapse}
+.table th,.table td{border-bottom:1px solid #e5e7eb;padding:10px;text-align:left}
+.table a{color:#2563eb;text-decoration:none}
+
+.card{border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#fff}
+.card-row{margin-bottom:8px}
+
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid #e5e7eb}
+.badge-admin{background:#fef3c7}
+.badge-user{background:#e0f2fe}
+
+.alert{padding:10px 12px;border-radius:8px;margin:8px 0}
+.alert.error{background:#fee2e2;border:1px solid #fecaca}
+.alert.success{background:#dcfce7;border:1px solid #bbf7d0}

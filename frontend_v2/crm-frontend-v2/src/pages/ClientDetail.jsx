@@ -1,63 +1,48 @@
-import React, { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { getClient } from '../lib/api'
+import React, { useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { getClient } from '../lib/api';
 
-export default function ClientDetail(){
-  const { id } = useParams()
-  const [client, setClient] = useState(null)
-  const [err, setErr] = useState(null)
-  const [loading, setLoading] = useState(true)
+export default function ClientDetail() {
+  const { id } = useParams();
+  const [item, setItem] = useState(null);
+  const [err, setErr] = useState('');
 
   useEffect(() => {
-    let on = true
-    ;(async () => {
+    let live = true;
+    (async () => {
       try {
-        const data = await getClient(id)
-        if (on) setClient(data)
+        const data = await getClient(id);
+        if (!live) return;
+        setItem(data);
       } catch (e) {
-        if (on) setErr(e.message)
-      } finally {
-        on && setLoading(false)
+        console.error('Client detail error', e);
+        if (live) setErr('Could not load client');
       }
-    })()
-    return () => { on = false }
-  }, [id])
+    })();
+    return () => { live = false; };
+  }, [id]);
+
+  if (err) return <div className="alert error">{err}</div>;
+  if (!item) return <div>Loading...</div>;
+
+  const name = [item.first_name, item.last_name].filter(Boolean).join(' ') || '(no name)';
 
   return (
-    <div className="page">
-      <div style={{display:'flex',alignItems:'center',gap:12, marginBottom:10}}>
-        <h1 style={{margin:0}}>Client #{id}</h1>
-        <Link to="/clients" className="btn-ghost">← Back</Link>
+    <div>
+      <div className="toolbar">
+        <h1>Client</h1>
+        <div className="toolbar-actions">
+          <Link to="/clients" className="btn btn-ghost">Back to list</Link>
+        </div>
       </div>
 
-      {loading && <p>Loading…</p>}
-      {err && <p className="error">Error: {err}</p>}
-      {(!loading && !client) && <p>No client data.</p>}
-
-      {client && (
-        <>
-          <div className="card">
-            <h3 style={{marginTop:0}}>Profile</h3>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:10}}>
-              <div><strong>First name:</strong> {client.first_name || '—'}</div>
-              <div><strong>Last name:</strong> {client.last_name || '—'}</div>
-              <div><strong>Email:</strong> {client.email || '—'}</div>
-              <div><strong>Phone:</strong> {client.phone || '—'}</div>
-              <div><strong>Created:</strong> {client.created_at ? new Date(client.created_at).toLocaleString() : '—'}</div>
-            </div>
-          </div>
-
-          <div className="card" style={{marginTop:16}}>
-            <h3 style={{marginTop:0}}>Services (WIP)</h3>
-            <p>Coming soon.</p>
-          </div>
-
-          <div className="card" style={{marginTop:16}}>
-            <h3 style={{marginTop:0}}>Invoices (WIP)</h3>
-            <p>Coming soon.</p>
-          </div>
-        </>
-      )}
+      <div className="card">
+        <div className="card-row"><strong>Name:</strong> {name}</div>
+        <div className="card-row"><strong>Email:</strong> {item.email || '-'}</div>
+        <div className="card-row"><strong>Phone:</strong> {item.phone || '-'}</div>
+        <div className="card-row"><strong>Created:</strong> {item.created_at ? new Date(item.created_at).toLocaleString() : '-'}</div>
+      </div>
     </div>
-  )
+  );
 }
+

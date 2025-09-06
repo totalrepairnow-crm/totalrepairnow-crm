@@ -1,66 +1,94 @@
-import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { listClients } from "../utils/clients";
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api } from '../utils/api'; // ajusta si tu api vive en otra ruta
 
-export default function Clients(){
-  const [data,setData] = useState({items:[], total:0, page:1, pageSize:20});
-  const [q,setQ] = useState("");
-  const [loading,setLoading] = useState(true);
-  const [err,setErr] = useState("");
-  const navigate = useNavigate();
+export default function Clients() {
+  const [rows, setRows] = useState([]);
+  const [q, setQ] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  async function load(p=1){
-    try{
-      setLoading(true); setErr("");
-      const res = await listClients({page:p,pageSize:20,q});
-      setData(res);
-    }catch(e){
-      setErr(e.message || "Error");
-    }finally{ setLoading(false); }
-  }
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const data = await api.get('/clients');
+        if (!cancelled) setRows(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error('Clients load error', e);
+        if (!cancelled) setError('Failed to load clients');
+        if (!cancelled) setRows([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
-  useEffect(()=>{ load(1); },[]);
+  const filtered = useMemo(() => {
+    if (!q) return rows;
+    const needle = q.toLowerCase();
+    return rows.filter(r => {
+      const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
+      return [name, r.email, r.phone].filter(Boolean).some(v => v.toLowerCase().includes(needle));
+    });
+  }, [rows, q]);
 
   return (
-    <div className="container">
-      <div className="dash-head">
-        <h1 className="dash-title">Clientes</h1>
-        <div className="spacer" />
-        <Link to="/clients/new" className="btn">Nuevo cliente</Link>
-      </div>
-      <div className="card" style={{marginBottom:12}}>
-        <form onSubmit={(e)=>{e.preventDefault(); load(1);}} className="grid-2">
-          <div>
-            <label>Búsqueda</label>
-            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="empresa o email" />
-          </div>
-          <div style={{display:'flex',alignItems:'end',gap:8}}>
-            <button className="btn" type="submit">Buscar</button>
-            <button className="btn secondary" type="button" onClick={()=>{setQ(""); load(1);}}>Limpiar</button>
-          </div>
-        </form>
+    <div className="page">
+      <div className="page-header" style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
+        <h1>Clients</h1>
+        <div className="actions" style={{display:'flex',gap:8}}>
+          <Link className="button button--primary" to="/clients/new">Add Client</Link>
+        </div>
       </div>
 
-      {loading ? <div className="skel" /> : err ? <div className="alert error">{err}</div> : (
-        <div className="table">
-          <div className="tr th">
-            <div>ID</div><div>Empresa</div><div>Email</div><div>Teléfono</div><div>Acciones</div>
-          </div>
-          {data.items.map(c=>(
-            <div className="tr" key={c.id}>
-              <div>{c.id}</div>
-              <div>{c.empresa}</div>
-              <div>{c.email||"—"}</div>
-              <div>{c.telefono||"—"}</div>
-              <div className="row-actions">
-                <Link className="btn secondary" to={`/clients/${c.id}`}>Ver</Link>
-                <Link className="btn" to={`/clients/${c.id}/edit`}>Editar</Link>
-              </div>
-            </div>
-          ))}
-          {data.items.length===0 && <div className="empty">Sin resultados</div>}
-        </div>
-      )}
+      <div className="toolbar" style={{margin:'12px 0'}}>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search by name, email or phone"
+          aria-label="Search clients"
+          style={{padding:'8px 10px',borderRadius:8,border:'1px solid #e5e7eb',minWidth:260}}
+        />
+      </div>
+
+      <div className="card">
+        {loading && <div>Loading…</div>}
+        {error && !loading && <div className="alert">{error}</div>}
+        {!loading && filtered.length === 0 && <div>No clients found.</div>}
+
+        {!loading && filtered.length > 0 && (
+          <table className="table" style={{width:'100%'}}>
+            <thead>
+              <tr>
+                <th style={{textAlign:'left'}}>Name</th>
+                <th style={{textAlign:'left'}}>Email</th>
+                <th style={{textAlign:'left'}}>Phone</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(c => {
+                const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '—';
+                return (
+                  <tr key={c.id}>
+                    <td>{name}</td>
+                    <td>{c.email || '—'}</td>
+                    <td>{c.phone || '—'}</td>
+                    <td>{c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</td>
+                    <td style={{textAlign:'right'}}>
+                      <Link className="button button--ghost" to={`/clients/${c.id}`}>View</Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

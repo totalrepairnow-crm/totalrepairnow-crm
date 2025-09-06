@@ -1,84 +1,84 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { getClients } from '../lib/api'
-import { Link, useNavigate } from 'react-router-dom'
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { getClients } from '../lib/api';
 
 export default function Clients() {
-  const [rows, setRows] = useState([])
-  const [q, setQ] = useState('')
-  const [err, setErr] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const nav = useNavigate()
+  const [rows, setRows] = useState([]);
+  const [q, setQ] = useState('');
+  const [err, setErr] = useState('');
+  const nav = useNavigate();
 
   useEffect(() => {
-    let on = true
-    ;(async () => {
+    let live = true;
+    (async () => {
       try {
-        const data = await getClients()
-        const list = Array.isArray(data) ? data : (data?.items || [])
-        if (on) setRows(list)
+        const data = await getClients();
+        if (!live) return;
+        const arr = Array.isArray(data) ? data : (data?.items || []);
+        setRows(arr);
       } catch (e) {
-        if (on) setErr(e.message)
-      } finally {
-        on && setLoading(false)
+        console.error('Clients load error', e);
+        if (live) setErr('Could not load clients');
       }
-    })()
-    return () => { on = false }
-  }, [])
+    })();
+    return () => { live = false; };
+  }, []);
 
   const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    if (!s) return rows
-    return rows.filter(c => {
-      return [c.first_name, c.last_name, c.email, c.phone]
-        .filter(Boolean).some(v => String(v).toLowerCase().includes(s))
-    })
-  }, [rows, q])
+    const s = q.trim().toLowerCase();
+    if (!s) return rows;
+    return rows.filter(r =>
+      [r.first_name, r.last_name, r.email, r.phone]
+        .filter(Boolean)
+        .some(v => String(v).toLowerCase().includes(s))
+    );
+  }, [rows, q]);
 
   return (
-    <div className="page">
-      <h1>Clients</h1>
-
-      <div className="toolbar" style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '8px 0 16px' }}>
-        <input
-          value={q}
-          onChange={e => setQ(e.target.value)}
-          placeholder="Search name, email or phone…"
-          className="input"
-          style={{ maxWidth: 320 }}
-        />
-        <button className="btn" onClick={() => setQ('')}>Clear</button>
-        <button className="btn-ghost" onClick={() => nav('/clients/new')}>+ New client</button>
+    <div>
+      <div className="toolbar">
+        <h1>Clients</h1>
+        <div className="toolbar-actions">
+          <input
+            className="input"
+            placeholder="Search..."
+            value={q}
+            onChange={e => setQ(e.target.value)}
+          />
+          <button className="btn btn-primary" onClick={() => nav('/clients/new')}>
+            New Client
+          </button>
+        </div>
       </div>
 
-      {loading && <p>Loading…</p>}
-      {err && <p className="error">Error: {err}</p>}
+      {err && <div className="alert error">{err}</div>}
 
-      {!loading &&
+      <div className="table-wrap">
         <table className="table">
           <thead>
-            <tr><th>ID</th><th>Name</th><th>Email</th><th>Phone</th><th>Created</th><th>Actions</th></tr>
+            <tr>
+              <th>Name</th><th>Email</th><th>Phone</th><th>Created</th>
+            </tr>
           </thead>
           <tbody>
             {filtered.map(c => {
-              const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '—'
+              const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)';
               return (
                 <tr key={c.id}>
-                  <td>{c.id}</td>
-                  <td>{name}</td>
-                  <td>{c.email || '—'}</td>
-                  <td>{c.phone || '—'}</td>
-                  <td>{c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}</td>
-                  <td>
-                    <Link to={`/clients/${c.id}`} className="btn-ghost">View</Link>
-                  </td>
+                  <td><Link to={`/clients/${c.id}`}>{name}</Link></td>
+                  <td>{c.email || '-'}</td>
+                  <td>{c.phone || '-'}</td>
+                  <td>{c.created_at ? new Date(c.created_at).toLocaleString() : '-'}</td>
                 </tr>
-              )
+              );
             })}
-            {filtered.length === 0 && <tr><td colSpan={6}>No clients</td></tr>}
+            {!filtered.length && (
+              <tr><td colSpan={4} style={{textAlign:'center', color:'#64748b'}}>No results</td></tr>
+            )}
           </tbody>
         </table>
-      }
+      </div>
     </div>
-  )
+  );
 }
 

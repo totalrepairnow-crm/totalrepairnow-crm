@@ -11,3 +11,7 @@ cypress/videos/
 cypress/screenshots/
 crm_tests/node_modules/
 frontend/node_modules/
+
+# Frontend v2 build
+frontend_v2/crm-frontend-v2/dist/
+

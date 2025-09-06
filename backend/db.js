@@ -1,13 +1,18 @@
 const { Pool } = require('pg');
 
-const config = {
-  host: process.env.PGHOST || '127.0.0.1',
-  port: +(process.env.PGPORT || 5432),
-  user: process.env.PGUSER || 'crmuser',
-  password: process.env.PGPASSWORD || '',
-  database: process.env.PGDATABASE || 'crm',
-  ssl: process.env.PGSSL === 'require' ? { rejectUnauthorized: false } : false,
-};
+// Usa variables de entorno ya configuradas por pg (PGHOST, PGUSER, etc.)
+const pool = new Pool();
 
-const pool = new Pool(config);
-module.exports = { pool };
+/**
+ * Export universal:
+ *  - Se puede usar como función: db(text, params)
+ *  - Tiene método .query: db.query(text, params)
+ *  - Expone el pool real en .pool por si se necesita.
+ */
+function db(text, params) {
+  return pool.query(text, params);
+}
+db.query = (text, params) => pool.query(text, params);
+db.pool  = pool;
+
+module.exports = db;

@@ -1,24 +1,31 @@
 // server.js — CRM Backend
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const db = require('./db');
+const pool = require('./db');
 
 const app = express();
+
+// Middlewares básicos
 app.use(express.json());
 
-// Health
-app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+// --- Healthcheck ---
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok' });
+});
 
-// Login: devuelve token y accessToken (mismo valor)
+// --- Login simple (devuelve token y accessToken por compatibilidad) ---
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'Missing credentials' });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing credentials' });
+    }
 
     const q = 'SELECT id, email, password_hash, role FROM users WHERE email=$1 LIMIT 1';
-    const { rows } = await db.query(q, [email]);
+    const { rows } = await pool.query(q, [email]);
     const user = rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -31,6 +38,8 @@ app.post('/api/login', async (req, res) => {
       JWT_SECRET,
       { expiresIn: '7d' }
     );
+
+    // Enviamos 'token' y 'accessToken' (mismo valor) para no romper frontends previos
     res.json({ token, accessToken: token });
   } catch (err) {
     console.error('LOGIN /api/login ERROR:', err);
@@ -38,31 +47,46 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Montar routers si existen
+// --- Helper: montar rutas si el archivo existe ---
 function mountIfExists(prefix, file) {
   try {
     const r = require(file);
     app.use(prefix, r);
     console.log(`Mounted ${prefix} -> ${file}`);
-  } catch (_e) {}
+  } catch (_e) {
+    // Silencioso: la ruta es opcional
+  }
 }
+
+/**
+ * Rutas de la API
+ * Nota:
+ * - clients -> ./routes/clients
+ * - services anidados bajo /api/clients (si tu router lo define así)
+ * - users    -> ./routes/users
+ * - uploads  -> ./routes/uploads
+ * - metrics  -> ./routes/metrics
+ * - dashboard-> ./routes/dashboard  (¡NUEVO montaje para evitar 502!)
+ */
 mountIfExists('/api/clients',   './routes/clients');
-mountIfExists('/api/clients',   './routes/services');
+mountIfExists('/api/clients',   './routes/services');  // si tu router añade /:id/services
 mountIfExists('/api/users',     './routes/users');
 mountIfExists('/api',           './routes/uploads');
 mountIfExists('/api/metrics',   './routes/metrics');
-mountIfExists('/api/dashboard', './routes/dashboard'); // << importante
+mountIfExists('/api/dashboard', './routes/dashboard'); // <— AÑADIDO
 
-// 404 API
-app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
+// --- 404 API ---
+app.use('/api', (_req, res, _next) => {
+  res.status(404).json({ error: 'Not found' });
+});
 
-// Error handler
+// --- Error handler ---
 app.use((err, _req, res, _next) => {
   console.error('UNCAUGHT ERROR:', err);
   res.status(500).json({ error: 'Internal error' });
 });
 
-// Start
+// --- Start ---
 const PORT = Number(process.env.PORT || 3001);
 app.listen(PORT, () => console.log(`CRM backend running on port ${PORT}`));
 

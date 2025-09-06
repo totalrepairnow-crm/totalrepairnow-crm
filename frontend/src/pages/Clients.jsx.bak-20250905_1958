@@ -1,0 +1,144 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { getToken, parseJwt, isTokenValid, logoutAndGoLogin } from "../utils/auth";
+
+const API_BASE = process.env.REACT_APP_API_BASE || "";
+
+export default function Clients() {
+  const [items, setItems] = useState([]);
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  const me = useMemo(() => {
+    const tok = getToken();
+    const p = tok ? parseJwt(tok) : null;
+    return { token: tok, role: p?.role || null, email: p?.email || null };
+  }, []);
+
+  useEffect(() => {
+    if (!isTokenValid(me.token)) {
+      logoutAndGoLogin();
+      return;
+    }
+    setLoading(true);
+    fetch(`${API_BASE}/api/clients`, {
+      headers: { Authorization: `Bearer ${me.token}` },
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        const arr = Array.isArray(data) ? data : data.items || [];
+        setItems(arr);
+        setErr(null);
+      })
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [me.token]);
+
+  const filtered = useMemo(() => {
+    if (!q) return items;
+    const qq = q.toLowerCase();
+    return items.filter((x) =>
+      [x.first_name, x.last_name, x.email, x.phone]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(qq))
+    );
+  }, [items, q]);
+
+  return (
+    <div className="page" style={{ display: "grid", gap: 16 }}>
+      <div
+        className="page-head"
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+      >
+        <h1 style={{ margin: 0 }}>Clients</h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search client..."
+            aria-label="Search client"
+            style={{
+              padding: "8px 10px",
+              border: "1px solid #e2e8f0",
+              borderRadius: 8,
+              minWidth: 220,
+            }}
+          />
+          {me.role === "admin" && (
+            <button
+              className="button button--primary"
+              onClick={() => window.location.assign("/clients/new")}
+            >
+              New client
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 0 }}>
+        {loading && <div style={{ padding: 16 }}>Loading...</div>}
+        {err && (
+          <div style={{ padding: 16, color: "#b91c1c" }}>
+            Error loading clients: {String(err)}
+          </div>
+        )}
+        {!loading && !err && (
+          <table className="table" style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead style={{ background: "#f8fafc" }}>
+              <tr>
+                <th style={{ textAlign: "left", padding: "10px 12px" }}>Name</th>
+                <th style={{ textAlign: "left", padding: "10px 12px" }}>Email</th>
+                <th style={{ textAlign: "left", padding: "10px 12px" }}>Phone</th>
+                <th style={{ textAlign: "left", padding: "10px 12px" }}>Created</th>
+                <th style={{ width: 1 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((c) => {
+                const name =
+                  [c.first_name, c.last_name].filter(Boolean).join(" ") || "—";
+                return (
+                  <tr key={c.id} className="tr">
+                    <td style={{ padding: "10px 12px", borderTop: "1px solid #eef2f7" }}>
+                      {name}
+                    </td>
+                    <td style={{ padding: "10px 12px", borderTop: "1px solid #eef2f7" }}>
+                      {c.email || "—"}
+                    </td>
+                    <td style={{ padding: "10px 12px", borderTop: "1px solid #eef2f7" }}>
+                      {c.phone || "—"}
+                    </td>
+                    <td style={{ padding: "10px 12px", borderTop: "1px solid #eef2f7" }}>
+                      {c.created_at ? new Date(c.created_at).toLocaleDateString() : "—"}
+                    </td>
+                    <td
+                      style={{
+                        padding: "10px 12px",
+                        borderTop: "1px solid #eef2f7",
+                        textAlign: "right",
+                      }}
+                    >
+                      <a href={`/clients/${c.id}`} className="button button--ghost">
+                        View
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={5} style={{ padding: "14px 12px", color: "#64748b" }}>
+                    No results.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}

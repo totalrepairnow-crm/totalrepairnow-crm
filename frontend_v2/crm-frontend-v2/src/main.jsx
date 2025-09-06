@@ -1,44 +1,56 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import Header from './components/Header.jsx'
-import Login from './pages/Login.jsx'
-import Dashboard from './pages/Dashboard.jsx'
-import Clients from './pages/Clients.jsx'
-import ClientDetail from './pages/ClientDetail.jsx'
-import ClientNew from './pages/ClientNew.jsx'
-import Users from './pages/Users.jsx'
-import { getToken } from './lib/api.js'
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
+
+import Header from './components/Header'
+import Login from './pages/Login'
+import Dashboard from './pages/Dashboard'
+import Clients from './pages/Clients'
+import ClientNew from './pages/ClientNew'
+import ClientDetail from './pages/ClientDetail'
+import Users from './pages/Users'
+
+import { getToken } from './lib/api'
 import './styles.css'
 
-function Protected({ children }) {
-  return getToken() ? children : <Navigate to="/login" replace />
+function Protected() {
+  const authed = !!getToken()
+  return authed ? <Outlet /> : <Navigate to="/login" replace />
 }
 
-function App() {
+function ProtectedLayout() {
   return (
     <>
       <Header />
-            <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
-        <Route path="/clients" element={<Protected><Clients /></Protected>} />
-        <Route path="/clients/new" element={<Protected><ClientNew /></Protected>} />
-        <Route path="/clients/:id" element={<Protected><ClientDetail /></Protected>} />
-        <Route path="/users" element={<Protected><Users /></Protected>} />
-        <Route path="*" element={<div className="page">Not found</div>} />
-      </Routes>
-
+      <div className="page">
+        <Outlet />
+      </div>
     </>
   )
 }
 
 createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <BrowserRouter basename="/v2">
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>
-)
+  <BrowserRouter basename="/v2">
+    <Routes>
+      {/* público */}
+      <Route path="/login" element={<Login />} />
 
+      {/* redirección raíz */}
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+      {/* privado (con header) */}
+      <Route element={<Protected />}>
+        <Route element={<ProtectedLayout />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/clients" element={<Clients />} />
+          <Route path="/clients/new" element={<ClientNew />} />
+          <Route path="/clients/:id" element={<ClientDetail />} />
+          <Route path="/users" element={<Users />} />
+        </Route>
+      </Route>
+
+      {/* catch-all */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  </BrowserRouter>
+)

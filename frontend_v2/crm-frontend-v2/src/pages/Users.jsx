@@ -1,45 +1,58 @@
-import React, { useEffect, useState } from 'react'
-import { getUsers } from '../lib/api'
+import React, { useEffect, useState } from 'react';
+import { getUsers } from '../lib/api';
+
+const RoleBadge = ({ role }) => {
+  const cls = role === 'admin' ? 'badge badge-admin' : 'badge badge-user';
+  return <span className={cls}>{role}</span>;
+};
 
 export default function Users() {
-  const [rows, setRows] = useState([])
-  const [err, setErr] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [rows, setRows] = useState([]);
+  const [err, setErr] = useState('');
 
   useEffect(() => {
-    let on = true
-    getUsers()
-      .then(d => {
-        const items = Array.isArray(d) ? d : (d?.items || [])
-        if (on) setRows(items)
-      })
-      .catch(e => { if (on) setErr(e.message) })
-      .finally(() => on && setLoading(false))
-    return () => { on = false }
-  }, [])
+    let live = true;
+    (async () => {
+      try {
+        const data = await getUsers();
+        if (!live) return;
+        setRows(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.error('Users load error', e);
+        if (live) setErr('Could not load users');
+      }
+    })();
+    return () => { live = false; };
+  }, []);
 
   return (
-    <div className="page">
-      <h1>Users</h1>
-      {loading && <p>Loading…</p>}
-      {err && <p className="error">Error: {err}</p>}
-      {!loading &&
+    <div>
+      <div className="toolbar">
+        <h1>Users</h1>
+      </div>
+
+      {err && <div className="alert error">{err}</div>}
+
+      <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Username</th></tr></thead>
+          <thead>
+            <tr><th>Email</th><th>Username</th><th>Role</th></tr>
+          </thead>
           <tbody>
             {rows.map(u => (
               <tr key={u.id}>
-                <td>{u.id}</td>
                 <td>{u.email}</td>
-                <td>{u.role}</td>
-                <td>{u.username}</td>
+                <td>{u.username || '-'}</td>
+                <td><RoleBadge role={u.role || 'user'} /></td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td colSpan={4}>No users (or forbidden)</td></tr>}
+            {!rows.length && (
+              <tr><td colSpan={3} style={{textAlign:'center', color:'#64748b'}}>No users</td></tr>
+            )}
           </tbody>
         </table>
-      }
+      </div>
     </div>
-  )
+  );
 }
 

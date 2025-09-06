@@ -1,44 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../db');
-const { requireAuth } = require('../middleware/auth');
-const { requireRole } = require('../middleware/auth');
-const bcrypt = require('bcryptjs');
+const db = require('../db');
 
-/** Listar usuarios (admin) */
-router.get('/', requireAuth, requireRole('admin'), async (_req, res) => {
-  const { rows } = await pool.query(
-    `SELECT id, username, email, role FROM users ORDER BY id ASC`
-  );
-  res.json({ items: rows });
-});
-
-/** Crear usuario (admin) body: {username,email,password,role[admin|tech]} */
-router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
-  const { username, email, password, role='tech' } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'email y password son obligatorios' });
-
-  const hash = bcrypt.hashSync(password, 10);
-  const { rows } = await pool.query(
-    `INSERT INTO users (username, email, password_hash, role)
-     VALUES ($1,$2,$3,$4)
-     RETURNING id, username, email, role`,
-    [username || email.split('@')[0], email, hash, role]
-  );
-  res.status(201).json(rows[0]);
-});
-
-/** Cambiar rol (admin) */
-router.put('/:id/role', requireAuth, requireRole('admin'), async (req, res) => {
-  const id = req.params.id;
-  const { role } = req.body || {};
-  if (!['admin','tech'].includes(role)) return res.status(400).json({ error: 'rol inválido' });
-  const { rows } = await pool.query(
-    `UPDATE users SET role=$1 WHERE id=$2 RETURNING id, username, email, role`,
-    [role, id]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Usuario no encontrado' });
-  res.json(rows[0]);
+// GET /api/users
+router.get('/', async (_req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT
+        id,
+        email,
+        COALESCE(role, 'user') AS role,
+        split_part(email,'@',1) AS username
+      FROM users
+      ORDER BY id DESC
+      LIMIT 500
+    `);
+    return res.json(rows);
+  } catch (e) {
+    console.error('GET /api/users failed:', e);
+    // No tirar el server: responder arreglo vacío
+    return res.json([]);
+  }
 });
 
 module.exports = router;

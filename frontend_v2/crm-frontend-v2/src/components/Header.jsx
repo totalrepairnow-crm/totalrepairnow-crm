@@ -1,10 +1,11 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { getToken, clearToken } from "../lib/api";
+import { getToken, clearToken, getRole } from "../lib/api";
 
 export default function Header(){
   const nav = useNavigate();
   const loc = useLocation();
   const authed = !!getToken();
+  const role = getRole(); // 'admin' | 'tech' | 'client' | null
   const isClients = loc.pathname === "/clients" || loc.pathname.startsWith("/clients/");
 
   function handleLogout(){
@@ -24,7 +25,9 @@ export default function Header(){
           <nav style={{marginLeft:"auto",display:"flex",gap:12}}>
             <Link to="/dashboard" className={loc.pathname==="/dashboard" ? "active" : ""}>Dashboard</Link>
             <Link to="/clients" className={isClients ? "active" : ""}>Clients</Link>
-            <Link to="/users" className={loc.pathname==="/users" ? "active" : ""}>Users</Link>
+            {role === 'admin' && (
+              <Link to="/users" className={loc.pathname==="/users" ? "active" : ""}>Users</Link>
+            )}
             <button className="btn-ghost" onClick={handleLogout}>Logout</button>
           </nav>
         ) : (

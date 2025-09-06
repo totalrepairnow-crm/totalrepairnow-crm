@@ -59,3 +59,41 @@ export async function createClient(payload) {
     body: JSON.stringify(payload)
   });
 }
+
+// --- helpers para conocer el rol desde el accessToken ---
+function parseJwt(token) {
+  try {
+    const payload = token.split('.')[1];
+    return JSON.parse(atob(payload));
+  } catch {
+    return null;
+  }
+}
+
+export function getRole() {
+  const t = getToken();
+  const p = t ? parseJwt(t) : null;
+  return p?.role || null; // 'admin' | 'tech' | 'client' | null
+}
+
+export async function getClientById(id) {
+  return apiFetch(`/clients/${id}`);
+}
+
+export async function createClient(payload) {
+  return apiFetch('/clients', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+// --- Clients detail & create ---
+export async function getClient(id) {
+  return apiFetch(`/clients/${id}`);
+}
+export async function createClient(payload) {
+  return apiFetch('/clients', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
