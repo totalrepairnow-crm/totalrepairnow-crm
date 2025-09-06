@@ -1,0 +1,131 @@
+/* --- Base --- */
+:root{
+  --primary: #2563eb;        /* azul corporativo */
+  --primary-600: #1d4ed8;
+  --text: #0f172a;           /* slate-900 */
+  --muted: #64748b;          /* slate-500 */
+  --border: #e5e7eb;         /* gray-200 */
+  --surface: #ffffff;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: #fff;          /* fondo blanco fijo */
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+}
+
+/* --- Layout helpers --- */
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+/* --- Header --- */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 56px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.main-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.main-nav a {
+  text-decoration: none;
+  color: var(--primary);
+  padding: 6px 2px;
+  border-radius: 6px;
+}
+.main-nav a:hover { text-decoration: underline; }
+.main-nav a.active {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+/* --- Botones --- */
+.btn-ghost {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid #cbd5e1;  /* slate-300 */
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-ghost:hover { background: #f1f5f9; } /* slate-100 */
+
+/* --- Tablas (suave y legible) --- */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.table th, .table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.table th {
+  background: #f8fafc; /* slate-50 */
+  color: #0f172a;
+  font-weight: 700;
+}
+.table tr:last-child td { border-bottom: 0; }
+
+/* --- Cards / contenedores --- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 4px rgba(16,24,40,0.06);
+  padding: 16px;
+}
+
+/* --- Formularios --- */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+}
+input:focus, select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .15);
+}
+
+/* --- Utilidades --- */
+.mt-16 { margin-top: 16px; }
+.mb-16 { margin-bottom: 16px; }
+
