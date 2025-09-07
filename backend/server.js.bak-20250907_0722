@@ -47,7 +47,7 @@ function mountIfExists(prefix, file) {
   } catch (_e) {}
 }
 mountIfExists('/api/clients',   './routes/clients');
-mountIfExists('/api/services', './routes/services');
+mountIfExists('/api/clients',   './routes/services');
 mountIfExists('/api/users',     './routes/users');
 mountIfExists('/api',           './routes/uploads');
 mountIfExists('/api/metrics',   './routes/metrics');

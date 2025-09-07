@@ -1,158 +1,66 @@
 const express = require('express');
-const { Pool } = require('pg');
-const jwt = require('jsonwebtoken');
-
 const router = express.Router();
-const pool = new Pool();
-
-/** Auth simple: Authorization: Bearer <token> (también soporta x-access-token / token) */
-function requireAuth(req, res, next) {
-  const h = req.headers['authorization'] || '';
-  const m = h.match(/^Bearer\s+(.+)/i);
-  const token =
-    (m && m[1]) ||
-    req.headers['x-access-token'] ||
-    req.headers['token'];
-
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-  try {
-    const secret = process.env.JWT_SECRET || 'dev';
-    req.user = jwt.verify(token, secret);
-    return next();
-  } catch (_e) {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
-}
-
-function toInt(x) {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : null;
-}
+const db = require('../db');
 
 /**
- * GET /api/clients/:clientId/services
- * Lista servicios del cliente
+ * GET /api/services
+ * Query:
+ *   page  -> number (1..N, default 1)
+ *   limit -> number (1..100, default 10)
  */
-router.get('/:clientId/services', requireAuth, async (req, res) => {
-  const clientId = toInt(req.params.clientId);
-  if (!clientId) return res.status(400).json({ error: 'Invalid clientId' });
-
+router.get('/', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT id, client_id, service_name, status, created_at
-       FROM public.services
-       WHERE client_id = $1
-       ORDER BY id DESC`,
-      [clientId]
+    const rawPage = parseInt(req.query.page, 10);
+    const rawLim  = parseInt(req.query.limit, 10);
+
+    const page  = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+    const limit = Number.isFinite(rawLim)  && rawLim  > 0 ? Math.min(rawLim, 100) : 10;
+    const offset = (page - 1) * limit;
+
+    // ¿Existe la tabla services?
+    const { rows: chk } = await db.query(`SELECT to_regclass('public.services') IS NOT NULL AS exists`);
+    if (!chk[0]?.exists) {
+      return res.json({ items: [], page, limit, total: 0, totalPages: 1, hasPrev: false, hasNext: false });
+    }
+
+    const { rows: cr } = await db.query(`SELECT COUNT(*)::int AS total FROM services`);
+    const total = cr[0]?.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const hasPrev = page > 1;
+    const hasNext = page < totalPages;
+
+    const { rows: items } = await db.query(
+      `SELECT * FROM services ORDER BY id DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
-    res.json(rows);
-  } catch (err) {
-    console.error('services list error:', err);
-    res.status(500).json({ error: 'Internal error' });
+
+    return res.json({ items, page, limit, total, totalPages, hasPrev, hasNext });
+  } catch (e) {
+    console.error('GET /api/services failed:', e);
+    // fallback que evita 502
+    return res.json({ items: [], page: 1, limit: 10, total: 0, totalPages: 1, hasPrev: false, hasNext: false });
   }
 });
 
 /**
- * POST /api/clients/:clientId/services
- * Crea servicio para el cliente
- * Body: { service_name: string, status?: string }
- * (El normalizador ya mapea "servicio"->service_name y "estado"->status si viene en ES)
+ * GET /api/services/:id
  */
-router.post('/:clientId/services', requireAuth, async (req, res) => {
-  const clientId = toInt(req.params.clientId);
-  if (!clientId) return res.status(400).json({ error: 'Invalid clientId' });
-
-  const { service_name } = req.body || {};
-  const status = (req.body && req.body.status) || 'open';
-
-  if (!service_name || typeof service_name !== 'string') {
-    return res.status(400).json({ error: 'service_name is required' });
-  }
-
+router.get('/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO public.services (client_id, service_name, status)
-       VALUES ($1, $2, COALESCE($3,'open'))
-       RETURNING id, client_id, service_name, status, created_at`,
-      [clientId, service_name, status]
-    );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    console.error('services create error:', err);
-    res.status(500).json({ error: 'Internal error' });
-  }
-});
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
 
-/**
- * PUT /api/clients/:clientId/services/:serviceId
- * Actualiza service_name y/o status
- */
-router.put('/:clientId/services/:serviceId', requireAuth, async (req, res) => {
-  const clientId = toInt(req.params.clientId);
-  const serviceId = toInt(req.params.serviceId);
-  if (!clientId || !serviceId) {
-    return res.status(400).json({ error: 'Invalid IDs' });
-  }
+    const { rows: chk } = await db.query(`SELECT to_regclass('public.services') IS NOT NULL AS exists`);
+    if (!chk[0]?.exists) return res.status(404).json({ error: 'Not found' });
 
-  const fields = [];
-  const values = [];
-  let i = 1;
+    const { rows } = await db.query(`SELECT * FROM services WHERE id = $1`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
 
-  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'service_name')) {
-    fields.push(`service_name = $${i++}`);
-    values.push(req.body.service_name);
-  }
-  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'status')) {
-    fields.push(`status = $${i++}`);
-    values.push(req.body.status);
-  }
-
-  if (fields.length === 0) {
-    return res.status(400).json({ error: 'No fields to update' });
-  }
-
-  values.push(clientId, serviceId);
-
-  try {
-    const { rows } = await pool.query(
-      `UPDATE public.services
-         SET ${fields.join(', ')}
-       WHERE client_id = $${i++} AND id = $${i}
-       RETURNING id, client_id, service_name, status, created_at`,
-      values
-    );
-    if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error('services update error:', err);
-    res.status(500).json({ error: 'Internal error' });
-  }
-});
-
-/**
- * DELETE /api/clients/:clientId/services/:serviceId
- */
-router.delete('/:clientId/services/:serviceId', requireAuth, async (req, res) => {
-  const clientId = toInt(req.params.clientId);
-  const serviceId = toInt(req.params.serviceId);
-  if (!clientId || !serviceId) {
-    return res.status(400).json({ error: 'Invalid IDs' });
-  }
-
-  try {
-    const { rowCount } = await pool.query(
-      `DELETE FROM public.services
-       WHERE client_id = $1 AND id = $2`,
-      [clientId, serviceId]
-    );
-    if (rowCount === 0) return res.status(404).json({ error: 'Not found' });
-    res.status(204).send();
-  } catch (err) {
-    console.error('services delete error:', err);
-    res.status(500).json({ error: 'Internal error' });
+    return res.json(rows[0]);
+  } catch (e) {
+    console.error('GET /api/services/:id failed:', e);
+    return res.status(500).json({ error: 'Internal error' });
   }
 });
 
 module.exports = router;
-

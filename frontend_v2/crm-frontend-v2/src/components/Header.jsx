@@ -30,6 +30,7 @@ export default function Header(){
             <Link className={isActive("/dashboard") ? "active" : ""} to="/dashboard">Dashboard</Link>
             <Link className={isActive("/clients") ? "active" : ""} to="/clients">Clients</Link>
             <Link className={isActive("/users") ? "active" : ""} to="/users">Users</Link>
+            <Link to="/services">Services</Link>
           </nav>
         )}
 

@@ -1,9 +1,7 @@
-// src/lib/api.js — versión saneada y única
+// src/lib/api.js — versión saneada y completa
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
-/* =====================
- * Auth helpers
- * ===================== */
+/* ---------------- Auth helpers ---------------- */
 export function getToken() {
   return (
     localStorage.getItem('accessToken') ||
@@ -13,20 +11,24 @@ export function getToken() {
   );
 }
 export function setToken(token) {
-  if (token) localStorage.setItem('accessToken', token);
+  if (token) {
+    localStorage.setItem('accessToken', token);
+    // limpia llaves legacy por si existen
+    localStorage.removeItem('token');
+    localStorage.removeItem('access_token');
+  }
 }
 export function clearToken() {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('token');
   localStorage.removeItem('access_token');
 }
-
-// Decodifica el rol desde el JWT; si falla, 'user'
 export function getRole() {
   const t = getToken();
   if (!t) return 'user';
   try {
-    const base64 = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const base64 = t.split('.')[1]?.replace(/-/g, '+').replace(/_/g, '/');
+    if (!base64) return 'user';
     const json = JSON.parse(atob(base64));
     return json.role || 'user';
   } catch {
@@ -34,79 +36,93 @@ export function getRole() {
   }
 }
 
-/* =====================
- * apiFetch
- * ===================== */
+/* ---------------- apiFetch (inyecta Authorization) ---------------- */
 export async function apiFetch(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   const t = getToken();
   if (t) headers.Authorization = `Bearer ${t}`;
 
   const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  const ct = res.headers.get('content-type') || '';
+
+  // Intenta parsear JSON si aplica
+  const parse = async () => (ct.includes('application/json') ? res.json() : res.text());
+
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
-      const err = await res.json();
-      msg = err?.error || JSON.stringify(err);
+      const err = await parse();
+      msg = (err && err.error) || (typeof err === 'string' ? err : JSON.stringify(err));
     } catch {}
     throw new Error(msg);
   }
-  const ct = res.headers.get('content-type') || '';
-  return ct.includes('application/json') ? res.json() : res.text();
+  return parse();
 }
 
-/* =====================
- * Auth API
- * ===================== */
-export async function login({ email, password }) {
+/* ---------------- Auth API ---------------- */
+export async function login(a, b) {
+  // Soporta login({email, password}) o login(email, password)
+  let email, password;
+  if (typeof a === 'object' && a !== null) ({ email, password } = a);
+  else { email = a; password = b; }
+
+  // Enviar SIEMPRE { email, password }
   const data = await apiFetch('/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
-  // soporta accessToken o token
-  const tok = data.accessToken || data.token;
-  if (tok) setToken(tok);
+
+  const token = data?.accessToken || data?.token;
+  if (token) setToken(token);
   return data;
 }
 
-/* =====================
- * Dashboard API
- * ===================== */
+/* ---------------- Dashboard ---------------- */
 export async function getDashboard() {
   try {
-    return await apiFetch('/dashboard');
-  } catch {
-    // fallback seguro para no romper UI
-    return { totals: { clients: 0, users: 0, services: 0 }, series: { servicesPerWeek: [] } };
-  }
+    const data = await apiFetch('/dashboard');
+    if (data && (data.totals || data.series)) return data;
+  } catch {}
+  // Fallback para que Dashboard nunca truene
+  return {
+    totals: { clients: 0, users: 0, services: 0 },
+    series: { servicesPerWeek: [] },
+  };
 }
 
-/* =====================
- * Clients API
- * ===================== */
-export async function getClients({ q = '', page = 1, limit = 10 } = {}) {
+/* ---------------- Clients ---------------- */
+export async function listClients({ q = '', page = 1, limit = 10 } = {}) {
   const sp = new URLSearchParams();
   if (q) sp.set('q', q);
   sp.set('page', String(page));
   sp.set('limit', String(limit));
   return apiFetch(`/clients?${sp.toString()}`);
 }
-
 export async function getClient(id) {
   return apiFetch(`/clients/${id}`);
 }
-
 export async function createClient(payload) {
   return apiFetch('/clients', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(payload || {}),
   });
 }
 
-/* =====================
- * Users API
- * ===================== */
-export async function getUsers() {
+/* ---------------- Users ---------------- */
+export async function listUsers() {
   return apiFetch('/users');
 }
+// alias por si alguna vista importa getUsers
+export const getUsers = listUsers;
 
+// --- Services ---
+export async function listServices({ q = '', page = 1, limit = 10 } = {}) {
+  const sp = new URLSearchParams();
+  if (q) sp.set('q', q);
+  sp.set('page', String(page));
+  sp.set('limit', String(limit));
+  return apiFetch(`/services?${sp.toString()}`);
+}
+export async function getService(id) {
+  return apiFetch(`/services/${id}`);
+}
