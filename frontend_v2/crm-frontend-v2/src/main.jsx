@@ -10,6 +10,7 @@ import ClientNew from './pages/ClientNew'
 import ClientDetail from './pages/ClientDetail'
 import Users from './pages/Users'
 
+import { ToasterProvider } from './components/Toaster'
 import { getToken } from './lib/api'
 import './styles.css'
 
@@ -30,27 +31,30 @@ function ProtectedLayout() {
 }
 
 createRoot(document.getElementById('root')).render(
-  <BrowserRouter basename="/v2">
-    <Routes>
-      {/* público */}
-      <Route path="/login" element={<Login />} />
+  <ToasterProvider>
+    <BrowserRouter basename="/v2">
+      <Routes>
+        {/* público */}
+        <Route path="/login" element={<Login />} />
 
-      {/* redirección raíz */}
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* redirección raíz */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-      {/* privado (con header) */}
-      <Route element={<Protected />}>
-        <Route element={<ProtectedLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/clients" element={<Clients />} />
-          <Route path="/clients/new" element={<ClientNew />} />
-          <Route path="/clients/:id" element={<ClientDetail />} />
-          <Route path="/users" element={<Users />} />
+        {/* privado (con header) */}
+        <Route element={<Protected />}>
+          <Route element={<ProtectedLayout />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/clients" element={<Clients />} />
+            <Route path="/clients/new" element={<ClientNew />} />
+            <Route path="/clients/:id" element={<ClientDetail />} />
+            <Route path="/users" element={<Users />} />
+          </Route>
         </Route>
-      </Route>
 
-      {/* catch-all */}
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  </BrowserRouter>
+        {/* catch-all */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  </ToasterProvider>
 )
+

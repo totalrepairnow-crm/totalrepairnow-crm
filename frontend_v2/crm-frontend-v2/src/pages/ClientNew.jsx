@@ -1,20 +1,20 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { createClient } from '../lib/api';
+import { useToast } from '../components/Toaster';
 
 export default function ClientNew() {
   const nav = useNavigate();
+  const toast = useToast();
   const [form, setForm] = useState({ first_name:'', last_name:'', email:'', phone:'' });
   const [submitting, setSubmitting] = useState(false);
-  const [msg, setMsg] = useState({ type:'', text:'' });
 
   async function onSubmit(e){
     e.preventDefault();
-    setMsg({type:'', text:''});
     setSubmitting(true);
     try {
       const created = await createClient(form);
-      setMsg({type:'success', text:'Client created'});
+      toast.push('Client created', { type:'success' });
       if (created?.id) {
         nav(`/clients/${created.id}`, { replace:true });
       } else {
@@ -22,13 +22,13 @@ export default function ClientNew() {
       }
     } catch (err) {
       console.error(err);
-      setMsg({type:'error', text: err.message || 'Error creating client'});
+      toast.push(err.message || 'Error creating client', { type:'error', ttl: 5000 });
     } finally {
       setSubmitting(false);
     }
   }
 
-  function setField(k, v){ setForm(prev => ({...prev, [k]: v})); }
+  const setField = (k, v) => setForm(prev => ({...prev, [k]: v}));
 
   return (
     <div>
@@ -38,8 +38,6 @@ export default function ClientNew() {
           <Link to="/clients" className="btn btn-ghost">Cancel</Link>
         </div>
       </div>
-
-      {msg.text && <div className={`alert ${msg.type}`}>{msg.text}</div>}
 
       <form className="form" onSubmit={onSubmit}>
         <div className="grid">

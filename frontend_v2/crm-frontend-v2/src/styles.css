@@ -51,3 +51,35 @@ nav a.active { background:#f1f5f9; }
 .alert{padding:10px 12px;border-radius:8px;margin:8px 0}
 .alert.error{background:#fee2e2;border:1px solid #fecaca}
 .alert.success{background:#dcfce7;border:1px solid #bbf7d0}
+
+/* Toaster */
+.toaster{
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+}
+.toast{
+  min-width: 260px;
+  max-width: 420px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-left-width: 4px;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.08);
+  padding: 10px 36px 10px 12px;
+  position: relative;
+}
+.toast-info   { border-left-color: #2563eb; }
+.toast-success{ border-left-color: #16a34a; }
+.toast-error  { border-left-color: #dc2626; }
+.toast-text{ color:#0f172a; font-size:14px; line-height:1.35 }
+.toast-close{
+  position:absolute; right:6px; top:4px;
+  border:none; background:transparent; font-size:18px; line-height:1; cursor:pointer;
+  color:#64748b;
+}
+.toast-close:hover{ color:#0f172a; }
