@@ -1,0 +1,90 @@
+/* ====== Dashboard layout, aislado al componente ====== */
+.dashboard-page .dash-row{
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 16px !important;
+  align-items: stretch !important;
+  margin-top: 8px !important;
+  width: 100% !important;
+}
+
+.dashboard-page .dash-card{
+  background: #fff !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 12px !important;
+  padding: 16px !important;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 320px !important;   /* 3 por fila aprox. en desktop */
+  min-width: 280px !important;  /* evita que se hagan demasiado angostas */
+}
+
+.dashboard-page .dash-card__header{
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  margin-bottom: 8px !important;
+}
+
+.dashboard-page .dash-card__header h2{
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  margin: 0 !important;
+}
+
+.dashboard-page .dash-card__body{ margin-top: 8px !important; }
+
+.dashboard-page .kpi{
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 8px !important;
+  margin-top: 4px !important;
+}
+
+.dashboard-page .kpi-value{
+  font-size: 32px !important;
+  line-height: 1.1 !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+}
+
+.dashboard-page .kpi-label{
+  color: #64748b !important;
+  font-size: 14px !important;
+}
+
+/* tabla compacta dentro del card, sin tocar tu .table global */
+.dashboard-page .table-compact td,
+.dashboard-page .table-compact th{ padding: 8px 10px !important; }
+
+/* badge local del card */
+.dashboard-page .dash-card .badge{
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 12px;
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+/* overlay del loading dentro del dashboard, scopeado */
+.dashboard-page .loading-overlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(255,255,255,.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.dashboard-page .spinner{
+  width: 36px; height: 36px;
+  border: 4px solid #cbd5e1;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: dashspin 0.8s linear infinite;
+}
+
+@keyframes dashspin { to { transform: rotate(360deg); } }

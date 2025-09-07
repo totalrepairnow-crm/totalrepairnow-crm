@@ -1,90 +1,103 @@
-// ~/crm_app/backend/routes/clients.js
+/**
+ * ~/crm_app/backend/routes/clients.js
+ * Listado con búsqueda (q), paginación (page/limit) y ORDENAMIENTO (sort/dir).
+ * sort: id|first_name|last_name|email|phone|created_at
+ * dir: asc|desc
+ */
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-/**
- * GET /api/clients
- * Query:
- *   q      -> string (nombre completo, email, phone, id)
- *   page   -> number (1..N, default 1)
- *   limit  -> number (1..100, default 10)
- */
+// --- util: parse número con mínimos y máximos
+function parsePositiveInt(v, def, min, max) {
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n) || n < (min ?? 1)) return def;
+  if (max && n > max) return max;
+  return n;
+}
+
+// --- GET /api/clients
 router.get('/', async (req, res) => {
   try {
-    const rawQ    = (req.query.q || '').toString().trim();
-    const rawPage = parseInt(req.query.page, 10);
-    const rawLim  = parseInt(req.query.limit, 10);
+    const rawQ = (req.query.q || '').trim();
+    const page  = parsePositiveInt(req.query.page, 1, 1, 1000000);
+    const limit = parsePositiveInt(req.query.limit, 10, 1, 100);
 
-    const page  = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
-    const limit = Number.isFinite(rawLim)  && rawLim  > 0 ? Math.min(rawLim, 100) : 10;
-    const offset = (page - 1) * limit;
+    // Ordenamiento seguro (whitelist)
+    const ALLOWED = new Set(['id','first_name','last_name','email','phone','created_at']);
+    const sortParam = String(req.query.sort || 'created_at').toLowerCase();
+    const sortCol = ALLOWED.has(sortParam) ? sortParam : 'created_at';
+    const dirParam = String(req.query.dir || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
 
+    // Búsqueda
     const params = [];
-    let where = '';
+    const whereParts = [];
     if (rawQ) {
       params.push(`%${rawQ}%`);
-      where = `
-        WHERE
-          (COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) ILIKE $1
-          OR email ILIKE $1
-          OR phone ILIKE $1
-          OR CAST(id AS TEXT) ILIKE $1
-      `;
+      whereParts.push(
+        `(
+          (COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) ILIKE $${params.length}
+          OR email ILIKE $${params.length}
+          OR phone ILIKE $${params.length}
+        )`
+      );
     }
+    const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
-    // total filtrado
-    const { rows: cr } = await db.query(
+    // Conteo total
+    const { rows: countRows } = await db.query(
       `SELECT COUNT(*)::int AS total FROM clients ${where}`,
       params
     );
-    const total = cr[0]?.total ?? 0;
+    const total = countRows[0]?.total ?? 0;
 
-    // página
+    // Página y offset
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const p = Math.min(page, totalPages);
+    const offset = (p - 1) * limit;
+
+    // LIMIT/OFFSET índices paramétricos
+    const limitIdx  = params.length + 1;
+    const offsetIdx = params.length + 2;
+
+    // ORDER BY (columna/sentido validados arriba)
+    const orderClause = `ORDER BY ${sortCol} ${dirParam}, id DESC`;
+
+    // Items
     const { rows: items } = await db.query(
       `
         SELECT id, first_name, last_name, email, phone, created_at
         FROM clients
         ${where}
-        ORDER BY id DESC
-        LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+        ${orderClause}
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       [...params, limit, offset]
     );
 
-    const totalPages = Math.max(1, Math.ceil(total / limit));
     return res.json({
       items,
-      page,
+      page: p,
       limit,
       total,
       totalPages,
-      hasPrev: page > 1,
-      hasNext: offset + items.length < total,
-      q: rawQ
+      hasPrev: p > 1,
+      hasNext: p < totalPages,
+      q: rawQ,
+      sort: sortCol,
+      dir: dirParam,
     });
   } catch (e) {
     console.error('GET /api/clients failed:', e);
-    // fallback seguro para no tirar el server
-    return res.json({
-      items: [],
-      page: 1,
-      limit: 10,
-      total: 0,
-      totalPages: 1,
-      hasPrev: false,
-      hasNext: false
-    });
+    return res.status(500).json({ error: 'Internal error' });
   }
 });
 
-/**
- * GET /api/clients/:id  (detalle)
- */
+// --- GET /api/clients/:id
 router.get('/:id', async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Bad id' });
 
     const { rows } = await db.query(
       `SELECT id, first_name, last_name, email, phone, created_at
@@ -93,7 +106,6 @@ router.get('/:id', async (req, res) => {
        LIMIT 1`,
       [id]
     );
-
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     return res.json(rows[0]);
   } catch (e) {
@@ -102,22 +114,19 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-/**
- * POST /api/clients  (crear)
- * body: { first_name, last_name, email, phone }
- */
+// --- POST /api/clients
 router.post('/', async (req, res) => {
   try {
     const { first_name = null, last_name = null, email = null, phone = null } = req.body || {};
-
     const { rows } = await db.query(
-      `INSERT INTO clients (first_name, last_name, email, phone)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, first_name, last_name, email, phone, created_at`,
+      `
+        INSERT INTO clients (first_name, last_name, email, phone)
+        VALUES ($1,$2,$3,$4)
+        RETURNING id, first_name, last_name, email, phone, created_at
+      `,
       [first_name, last_name, email, phone]
     );
-
-    return res.status(201).json(rows[0]);
+    return res.json(rows[0]);
   } catch (e) {
     console.error('POST /api/clients failed:', e);
     return res.status(500).json({ error: 'Internal error' });

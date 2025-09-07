@@ -9,35 +9,29 @@ export default function Clients() {
   // --- Estado derivado de la URL (con defaults y clamps)
   const urlPage  = Number.parseInt(searchParams.get('page')  || '1', 10);
   const urlLimit = Number.parseInt(searchParams.get('limit') || '10', 10);
-  const urlQ     = searchParams.get('q')    || '';
-  const urlSort  = (searchParams.get('sort') || 'created_at').toLowerCase();
-  const urlDir   = (searchParams.get('dir')  || 'desc').toLowerCase();
+  const urlQ     = searchParams.get('q') || '';
 
   const page  = Number.isFinite(urlPage)  && urlPage  > 0 ? urlPage  : 1;
   const limit = Number.isFinite(urlLimit) && urlLimit > 0 ? urlLimit : 10;
   const q     = urlQ;
-  const sort  = ['id','first_name','last_name','email','phone','created_at'].includes(urlSort) ? urlSort : 'created_at';
-  const dir   = urlDir === 'asc' ? 'asc' : 'desc';
 
   // Mantener el input de búsqueda sincronizado con la URL
   const [qInput, setQInput] = useState(q);
   useEffect(() => { setQInput(q); }, [q]);
 
-  // Autocompletar params faltantes (una vez)
+  // Si falta alguno de los params básicos, completa (sin empujar historial)
   useEffect(() => {
-    const needFix = (!searchParams.get('page')) || (!searchParams.get('limit')) || (!searchParams.get('sort')) || (!searchParams.get('dir'));
+    const needFix = (!searchParams.get('page')) || (!searchParams.get('limit'));
     if (needFix) {
       const next = new URLSearchParams(searchParams);
       if (!next.get('page'))  next.set('page', String(page));
       if (!next.get('limit')) next.set('limit', String(limit));
-      if (!next.get('sort'))  next.set('sort', sort);
-      if (!next.get('dir'))   next.set('dir', dir);
       setSearchParams(next, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // una sola vez
 
-  // Data
+  // --- Data
   const [rows, setRows] = useState([]);
   const [meta, setMeta] = useState({
     page: 1, limit: 10, total: 0, totalPages: 1, hasPrev: false, hasNext: false,
@@ -45,7 +39,7 @@ export default function Clients() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  // Fetch cuando cambian q/page/limit/sort/dir
+  // --- Fetch cuando cambian q/page/limit en la URL
   useEffect(() => {
     let cancelled = false;
     async function run() {
@@ -53,17 +47,30 @@ export default function Clients() {
       setErr('');
       try {
         const token = getToken();
-        const qs = new URLSearchParams({ q, page: String(page), limit: String(limit), sort, dir });
+        const qs = new URLSearchParams({
+          q,
+          page: String(page),
+          limit: String(limit),
+        });
         const res = await fetch(`/api/clients?${qs.toString()}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
+        //  a) Nuevo: { items, page, limit, total, totalPages, hasPrev, hasNext }
+        //  b) Viejo: [ ... ]
         if (Array.isArray(data)) {
           if (!cancelled) {
             setRows(data);
-            setMeta({ page, limit, total: data.length, totalPages: 1, hasPrev: false, hasNext: false });
+            setMeta({
+              page,
+              limit,
+              total: data.length,
+              totalPages: 1,
+              hasPrev: false,
+              hasNext: false,
+            });
           }
         } else {
           const top = data || {};
@@ -77,7 +84,7 @@ export default function Clients() {
             setMeta({ page, limit, total, totalPages, hasPrev, hasNext });
           }
         }
-      } catch (_e) {
+      } catch (e) {
         if (!cancelled) setErr('Failed to load clients');
       } finally {
         if (!cancelled) setLoading(false);
@@ -85,14 +92,14 @@ export default function Clients() {
     }
     run();
     return () => { cancelled = true; };
-  }, [q, page, limit, sort, dir]);
+  }, [q, page, limit]); // se recalcula por URL
 
-  // Handlers (escriben a la URL)
+  // --- Handlers que escriben a la URL
   const changeLimit = (newLimit) => {
     const next = new URLSearchParams(searchParams);
     next.set('limit', String(newLimit));
-    next.set('page', '1');
-    setSearchParams(next);
+    next.set('page', '1'); // reset page
+    setSearchParams(next); // push (para que se pueda volver)
   };
 
   const goPrev = () => {
@@ -112,7 +119,7 @@ export default function Clients() {
   // Debounce de búsqueda -> actualiza URL y resetea page=1
   useEffect(() => {
     const t = setTimeout(() => {
-      if (qInput === q) return;
+      if (qInput === q) return; // nada que hacer
       const next = new URLSearchParams(searchParams);
       next.set('q', qInput);
       next.set('page', '1');
@@ -120,24 +127,7 @@ export default function Clients() {
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qInput]);
-
-  // Ordenamiento: click en header -> toggle asc/desc; en nuevo col, default asc (id/created_at default desc)
-  const setSortBy = (col) => {
-    const next = new URLSearchParams(searchParams);
-    let nextDir = 'asc';
-    if (col === sort) {
-      nextDir = dir === 'asc' ? 'desc' : 'asc';
-    } else {
-      nextDir = (col === 'id' || col === 'created_at') ? 'desc' : 'asc';
-    }
-    next.set('sort', col);
-    next.set('dir', nextDir);
-    next.set('page', '1');
-    setSearchParams(next);
-  };
-
-  const caret = (col) => (sort === col ? (dir === 'asc' ? ' ▲' : ' ▼') : '');
+  }, [qInput]); // sólo cuando el usuario teclea
 
   // Derivados para texto
   const showingFrom = useMemo(() => (meta.total === 0 ? 0 : (meta.page - 1) * meta.limit + 1), [meta]);
@@ -177,11 +167,7 @@ export default function Clients() {
         <table className="table">
           <thead>
             <tr>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('first_name')}>Name{caret('first_name')}</th>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('email')}>Email{caret('email')}</th>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('phone')}>Phone{caret('phone')}</th>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('created_at')}>Created{caret('created_at')}</th>
-              <th style={{textAlign:'right'}}>Actions</th>
+              <th>Name</th><th>Email</th><th>Phone</th><th>Created</th><th style={{textAlign:'right'}}>Actions</th>
             </tr>
           </thead>
           <tbody>
