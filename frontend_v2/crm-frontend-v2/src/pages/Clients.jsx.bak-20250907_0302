@@ -1,0 +1,194 @@
+// src/pages/Clients.jsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { apiFetch } from '../lib/api';
+
+export default function Clients() {
+  const nav = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Estado inicial desde la URL
+  const pageFromURL  = Number(searchParams.get('page')  || '1');
+  const limitFromURL = Number(searchParams.get('limit') || '10');
+  const qFromURL     = searchParams.get('q') || '';
+
+  // Estado local
+  const [q, setQ] = useState(qFromURL);
+  const [items, setItems] = useState([]);
+  const [page, setPage] = useState(pageFromURL);
+  const [limit, setLimit] = useState(limitFromURL);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [hasPrev, setHasPrev] = useState(false);
+  const [hasNext, setHasNext] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Sincroniza si cambian los params por back/forward
+  useEffect(() => {
+    setPage(pageFromURL);
+    setLimit(limitFromURL);
+    setQ(qFromURL);
+  }, [pageFromURL, limitFromURL, qFromURL]);
+
+  // Cuando cambia q, actualiza URL y resetea a page=1
+  useEffect(() => {
+    const sp = new URLSearchParams(searchParams);
+    if (q && q.trim()) sp.set('q', q.trim()); else sp.delete('q');
+    sp.set('limit', String(limit));
+    sp.set('page', '1');
+    setSearchParams(sp, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
+
+  // Carga de datos
+  useEffect(() => {
+    const controller = new AbortController();
+    async function load() {
+      try {
+        setLoading(true);
+        setErr('');
+
+        const params = new URLSearchParams();
+        params.set('page', String(page));
+        params.set('limit', String(limit));
+        if (q && q.trim()) params.set('q', q.trim());
+
+        const data = await apiFetch(`/clients?${params.toString()}`, {
+          signal: controller.signal,
+        });
+
+        setItems(data.items || []);
+        setTotal(data.total || 0);
+        setTotalPages(data.totalPages || 1);
+        setHasPrev(!!data.hasPrev);
+        setHasNext(!!data.hasNext);
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          console.error('Clients load failed', e);
+          setErr('Error loading clients');
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+    return () => controller.abort();
+  }, [page, limit, q]);
+
+  // Helpers
+  const changeLimit = (newLimit) => {
+    const L = Number(newLimit) || 10;
+    setLimit(L);
+    // URL -> limit nuevo, page=1
+    const sp = new URLSearchParams(searchParams);
+    if (q && q.trim()) sp.set('q', q.trim()); else sp.delete('q');
+    sp.set('limit', String(L));
+    sp.set('page', '1');
+    setSearchParams(sp);
+  };
+
+  const gotoPage = (p) => {
+    const target = Math.max(1, Math.min(Number(p) || 1, totalPages));
+    setPage(target);
+    const sp = new URLSearchParams(searchParams);
+    if (q && q.trim()) sp.set('q', q.trim()); else sp.delete('q');
+    sp.set('limit', String(limit));
+    sp.set('page', String(target));
+    setSearchParams(sp);
+  };
+
+  const rows = useMemo(() => items || [], [items]);
+
+  const Pager = () => (
+    <div className="pager">
+      <button className="btn" disabled={!hasPrev || loading} onClick={() => gotoPage(page - 1)}>
+        ◀ Prev
+      </button>
+      <span style={{ margin: '0 10px' }}>
+        Page <b>{page}</b> / {totalPages} &nbsp;·&nbsp; {total} total
+      </span>
+      <button className="btn" disabled={!hasNext || loading} onClick={() => gotoPage(page + 1)}>
+        Next ▶
+      </button>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="toolbar">
+        <h1>Clients</h1>
+        <div className="toolbar-actions" style={{ gap: 10 }}>
+          <input
+            className="input"
+            placeholder="Search..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+
+          <select
+            className="input"
+            value={String(limit)}
+            onChange={(e) => changeLimit(e.target.value)}
+            title="Items per page"
+            style={{ minWidth: 120 }}
+          >
+            <option value="10">10 / page</option>
+            <option value="20">20 / page</option>
+            <option value="50">50 / page</option>
+            <option value="100">100 / page</option>
+          </select>
+
+          <button className="btn btn-primary" onClick={() => nav('/clients/new')}>
+            New Client
+          </button>
+        </div>
+      </div>
+
+      <Pager />
+
+      {err && <div className="alert error">{err}</div>}
+
+      <div className="table-wrap" style={{ position: 'relative' }}>
+        {loading && (
+          <div className="loading-overlay">
+            <div className="spinner" aria-label="Loading" />
+          </div>
+        )}
+
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{width:'35%'}}>Name</th>
+              <th style={{width:'30%'}}>Email</th>
+              <th style={{width:'20%'}}>Phone</th>
+              <th style={{width:'15%'}}>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => {
+              const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)';
+              return (
+                <tr key={c.id}>
+                  <td><Link to={`/clients/${c.id}`}>{name}</Link></td>
+                  <td>{c.email || '-'}</td>
+                  <td>{c.phone || '-'}</td>
+                  <td>{c.created_at ? new Date(c.created_at).toLocaleString() : '-'}</td>
+                </tr>
+              );
+            })}
+            {!rows.length && !loading && (
+              <tr>
+                <td colSpan={4} style={{ textAlign: 'center', color: '#64748b' }}>
+                  No results
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <Pager />
+    </div>
+  );
+}

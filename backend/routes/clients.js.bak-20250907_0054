@@ -1,0 +1,274 @@
+// ~/crm_app/backend/routes/clients.js
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+
+const router = express.Router();
+const pool = new Pool(); // Toma PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE del entorno
+
+// =============== AUTH MIDDLEWARE ROBUSTO ===============
+function extractToken(req) {
+  const h = req.headers || {};
+  const auth = h.authorization || h.Authorization;
+  if (auth && typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    return auth.slice(7).trim();
+  }
+  if (h['x-access-token']) return String(h['x-access-token']).trim();
+  if (h.token) return String(h.token).trim();
+  return null;
+}
+
+function verifyJWT(req, res, next) {
+  const token = extractToken(req);
+  if (!token) {
+    console.warn('[clients][AUTH] token ausente (Authorization/x-access-token/token)');
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    return next();
+  } catch (e) {
+    console.warn('[clients][AUTH] token inválido:', e.message);
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+}
+
+// Aplica el middleware a TODO lo de clientes
+router.use(verifyJWT);
+
+// =============== RUTAS ===============
+// GET /api/clients — búsqueda + paginación server-side
+router.get('/', async (req, res) => {
+  try {
+    const rawQ    = (req.query.q || '').toString().trim();
+    const rawPage = parseInt(req.query.page, 10);
+    const rawLim  = parseInt(req.query.limit, 10);
+
+    const page  = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+    const limit = Number.isFinite(rawLim)  && rawLim  > 0 ? Math.min(rawLim, 100) : 10;
+    const offset = (page - 1) * limit;
+
+    const params = [];
+    let where = '';
+
+    if (rawQ) {
+      params.push(`%${rawQ}%`);
+      where = `
+        WHERE
+          (COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) ILIKE $1
+          OR email ILIKE $1
+          OR phone ILIKE $1
+          OR CAST(id AS TEXT) ILIKE $1
+      `;
+    }
+
+    // total filtrado
+    const { rows: cr } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM clients ${where}`,
+      params
+    );
+    const total = cr[0]?.total || 0;
+
+    // página
+    const limitIdx  = params.length + 1;
+    const offsetIdx = params.length + 2;
+
+    const { rows: items } = await pool.query(
+      `
+        SELECT id, first_name, last_name, email, phone, created_at
+        FROM clients
+        ${where}
+        ORDER BY id DESC
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      `,
+      [...params, limit, offset]
+    );
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return res.json({
+      items,
+      page,
+      limit,
+      total,
+      totalPages,
+      hasPrev: page > 1,
+      hasNext: offset + items.length < total,
+      q: rawQ
+    });
+  } catch (e) {
+    console.error('GET /api/clients failed:', e);
+    return res.json({ items: [], page: 1, limit: 10, total: 0, totalPages: 1 });
+  }
+});
+
+
+    // total filtrado
+    const { rows: countRows } = await db.query(
+      `SELECT COUNT(*)::int AS total FROM clients ${where}`,
+      params
+    );
+    const total = countRows[0]?.total || 0;
+
+    // página
+    const { rows: items } = await db.query(
+      `
+      SELECT id, first_name, last_name, email, phone, created_at
+      FROM clients
+      ${where}
+      ORDER BY id DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+      `,
+      [...params, limit, offset]
+    );
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    return res.json({
+      items,
+      page,
+      limit,
+      total,
+      totalPages,
+      hasPrev: page > 1,
+      hasNext: offset + items.length < total,
+      q: rawQ
+    });
+  } catch (e) {
+    console.error('GET /api/clients failed:', e);
+    // Sin tirar el server
+    return res.json({ items: [], page: 1, limit: 10, total: 0, totalPages: 1 });
+  }
+});
+
+// GET /api/clients/:id -> detalle
+router.get('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, first_name, last_name, email, phone, created_at
+         FROM public.clients
+        WHERE id = $1`, [id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'No encontrado' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[clients][GET /:id] error:', err);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// --- POST /api/clients ---
+router.post('/', async (req, res) => {
+  try {
+    const { first_name = null, last_name = null, email, phone = null } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'email is required' });
+
+    // Opcional: validar duplicado por email
+    const dup = await pool.query(`SELECT id FROM clients WHERE email=$1`, [email]);
+    if (dup.rowCount > 0) {
+      return res.status(409).json({ error: 'email already exists' });
+    }
+
+    const ins = await pool.query(
+      `INSERT INTO clients (first_name, last_name, email, phone)
+       VALUES ($1,$2,$3,$4)
+       RETURNING id, first_name, last_name, email, phone, created_at`,
+      [first_name, last_name, email, phone]
+    );
+    return res.status(201).json(ins.rows[0]);
+  } catch (err) {
+    console.error('POST /clients error', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+
+// PUT /api/clients/:id -> actualizar parcial
+router.put('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
+
+  const { first_name, last_name, email, phone } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE public.clients
+          SET first_name = COALESCE($1, first_name),
+              last_name  = COALESCE($2, last_name),
+              email      = COALESCE($3, email),
+              phone      = COALESCE($4, phone)
+        WHERE id = $5
+      RETURNING id, first_name, last_name, email, phone, created_at`,
+      [first_name ?? null, last_name ?? null, email ?? null, phone ?? null, id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'No encontrado' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[clients][PUT /:id] error:', err);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// DELETE /api/clients/:id -> eliminar (ON DELETE CASCADE si FK en services)
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'id inválido' });
+
+  try {
+    const r = await pool.query(`DELETE FROM public.clients WHERE id=$1`, [id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'No encontrado' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[clients][DELETE /:id] error:', err);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+module.exports = router;
+
+// --- GET /api/clients/:id ---
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    // Cliente base
+    const c = await pool.query(
+      `SELECT id, first_name, last_name, email, phone, created_at
+       FROM clients
+       WHERE id=$1`,
+      [id]
+    );
+    if (c.rowCount === 0) return res.status(404).json({ error: 'Client not found' });
+
+    // Extras defensivos (si existen tablas; si no, regresan vacíos)
+    let services = [];
+    try {
+      const s = await pool.query(
+        `SELECT id, title, status, scheduled_at
+         FROM services
+         WHERE client_id=$1
+         ORDER BY scheduled_at DESC
+         LIMIT 20`,
+        [id]
+      );
+      services = s.rows || [];
+    } catch (_) {}
+
+    let invoices = [];
+    try {
+      const i = await pool.query(
+        `SELECT id, amount, status, created_at
+         FROM invoices
+         WHERE client_id=$1
+         ORDER BY created_at DESC
+         LIMIT 20`,
+        [id]
+      );
+      invoices = i.rows || [];
+    } catch (_) {}
+
+    return res.json({ client: c.rows[0], services, invoices });
+  } catch (err) {
+    console.error('GET /clients/:id error', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
