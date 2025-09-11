@@ -1,0 +1,213 @@
+// ~/crm_app/backend/routes/users.js
+const express = require('express');
+const router = express.Router();
+const db = require('../db');
+
+// bcrypt (con fallback)
+let bcrypt;
+try { bcrypt = require('bcrypt'); } catch { bcrypt = require('bcryptjs'); }
+
+// utils
+const toInt = (v, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : d;
+};
+
+const allowedRoles = new Set(['admin', 'tech', 'client']);
+
+const mapUser = (row) => ({
+  id: row.id,
+  first_name: row.first_name || null,
+  last_name: row.last_name || null,
+  email: row.email || null,
+  phone: row.phone || null,
+  role: row.role || null,
+  created_at: row.created_at || null,
+});
+
+function buildWhere({ q, role }) {
+  const clauses = [];
+  const params = [];
+
+  if (q) {
+    params.push(`%${q}%`);
+    const i = params.length;
+    clauses.push(
+      `(first_name ILIKE $${i} OR last_name ILIKE $${i} OR email ILIKE $${i} OR phone ILIKE $${i})`
+    );
+  }
+  if (role && allowedRoles.has(role)) {
+    params.push(role);
+    clauses.push(`role = $${params.length}`);
+  }
+
+  return {
+    sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
+    params,
+  };
+}
+
+/** GET /api/users?q=&role=&page=&limit= */
+router.get('/', async (req, res) => {
+  try {
+    const page = Math.max(1, toInt(req.query.page, 1));
+    const limit = Math.min(100, Math.max(1, toInt(req.query.limit, 10)));
+    const offset = (page - 1) * limit;
+    const q = (req.query.q || '').trim();
+    const role = (req.query.role || '').trim();
+
+    const { sql: whereSql, params } = buildWhere({ q, role });
+
+    const totalR = await db.query(`SELECT COUNT(*)::int AS c FROM users ${whereSql}`, params);
+    const total = totalR.rows[0]?.c ?? 0;
+
+    const itemsSql = `
+      SELECT id, first_name, last_name, email, phone, role, created_at
+      FROM users
+      ${whereSql}
+      ORDER BY id ASC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+    const itemsR = await db.query(itemsSql, [...params, limit, offset]);
+
+    res.json({
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      items: itemsR.rows.map(mapUser),
+    });
+  } catch (e) {
+    console.error('GET /users error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/** GET /api/users/:id */
+router.get('/:id', async (req, res) => {
+  try {
+    const id = toInt(req.params.id, 0);
+    if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+    const r = await db.query(
+      `SELECT id, first_name, last_name, email, phone, role, created_at
+       FROM users WHERE id = $1 LIMIT 1`,
+      [id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+
+    res.json(mapUser(r.rows[0]));
+  } catch (e) {
+    console.error('GET /users/:id error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/** POST /api/users */
+router.post('/', async (req, res) => {
+  try {
+    const {
+      first_name = null,
+      last_name = null,
+      email,
+      phone = null,
+      role = 'client',
+      password,
+    } = req.body || {};
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing email or password' });
+    }
+    if (!allowedRoles.has(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+    if (String(password).length < 8) {
+      return res.status(400).json({ error: 'Password too short (min 8 chars)' });
+    }
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    const sql = `
+      INSERT INTO users (first_name, last_name, email, phone, role, password_hash, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      RETURNING id, first_name, last_name, email, phone, role, created_at
+    `;
+    const params = [first_name, last_name, email, phone, role, password_hash];
+    const r = await db.query(sql, params);
+
+    res.status(201).json(mapUser(r.rows[0]));
+  } catch (e) {
+    // unique_violation
+    if (e && e.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    console.error('POST /users error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/** PUT /api/users/:id (first_name, last_name, email, phone, role, password?) */
+router.put('/:id', async (req, res) => {
+  try {
+    const id = toInt(req.params.id, 0);
+    if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+    const { first_name, last_name, email, phone, role, password } = req.body || {};
+
+    const sets = [];
+    const params = [];
+    const push = (frag, val) => { params.push(val); sets.push(`${frag} = $${params.length}`); };
+
+    if (first_name !== undefined) push('first_name', first_name);
+    if (last_name  !== undefined) push('last_name', last_name);
+    if (email      !== undefined) push('email', email);
+    if (phone      !== undefined) push('phone', phone);
+    if (role       !== undefined) {
+      if (!allowedRoles.has(role)) return res.status(400).json({ error: 'Invalid role' });
+      push('role', role);
+    }
+    if (password !== undefined) {
+      if (!password || String(password).length < 8) {
+        return res.status(400).json({ error: 'Password too short (min 8 chars)' });
+      }
+      const password_hash = await bcrypt.hash(password, 10);
+      push('password_hash', password_hash);
+    }
+
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+
+    params.push(id);
+    const sql = `
+      UPDATE users SET ${sets.join(', ')}, updated_at = NOW()
+      WHERE id = $${params.length}
+      RETURNING id, first_name, last_name, email, phone, role, created_at
+    `;
+    const r = await db.query(sql, params);
+    if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+
+    res.json(mapUser(r.rows[0]));
+  } catch (e) {
+    if (e && e.code === '23505') {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+    console.error('PUT /users/:id error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/** DELETE /api/users/:id */
+router.delete('/:id', async (req, res) => {
+  try {
+    const id = toInt(req.params.id, 0);
+    if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+    const r = await db.query(`DELETE FROM users WHERE id = $1`, [id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE /users/:id error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+module.exports = router;

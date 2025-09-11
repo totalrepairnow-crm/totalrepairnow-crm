@@ -1,36 +1,61 @@
-// server.js — CRM Backend
+// ~/crm_app/backend/server.js
 require('dotenv').config();
+
+const path = require('path');
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt');
 const db = require('./db');
 
-const app = express();
-app.use(express.json());
+// bcrypt con fallback a bcryptjs si no está instalado bcrypt nativo
+let bcrypt;
+try { bcrypt = require('bcrypt'); } catch { bcrypt = require('bcryptjs'); }
 
-// Health
+// CORS opcional (NO es obligatorio tenerlo instalado)
+function safeRequire(name) {
+  try { return require(name); } catch { return null; }
+}
+const cors = safeRequire('cors');
+
+const app = express();
+
+// Middlewares
+if (cors) {
+  app.use(cors());
+}
+app.use(express.json({ limit: '5mb' }));
+
+// Healthcheck
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
-// Login: devuelve token y accessToken (mismo valor)
+// Login — devuelve { token, accessToken } (mismo valor)
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ error: 'Missing credentials' });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing credentials' });
+    }
 
-    const q = 'SELECT id, email, password_hash, role FROM users WHERE email=$1 LIMIT 1';
+    // Busca usuario por email (case-insensitive)
+    const q = `
+      SELECT id, email, password_hash, COALESCE(role,'admin') AS role
+      FROM users
+      WHERE lower(email) = lower($1)
+      LIMIT 1
+    `;
     const { rows } = await db.query(q, [email]);
     const user = rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
-    const ok = await bcrypt.compare(password, user.password_hash);
+    const ok = await bcrypt.compare(password, user.password_hash || '');
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
 
     const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
     const token = jwt.sign(
-      { sub: user.id, email: user.email, role: user.role || 'admin' },
+      { sub: user.id, email: user.email, role: user.role },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
+
     res.json({ token, accessToken: token });
   } catch (err) {
     console.error('LOGIN /api/login ERROR:', err);
@@ -38,31 +63,40 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Montar routers si existen
-function mountIfExists(prefix, file) {
+// Montar routers (con protección para no romper el arranque si falta alguno)
+function mountIfExists(prefix, relPath) {
   try {
-    const r = require(file);
-    app.use(prefix, r);
-    console.log(`Mounted ${prefix} -> ${file}`);
-  } catch (_e) {}
+    const mod = require(relPath);
+    const isRouter =
+      typeof mod === 'function' ||
+      (mod && typeof mod === 'object' && (mod.stack || mod.handle));
+    if (!isRouter) {
+      console.error(`ERROR mounting ${prefix} from ${relPath}: Not an express router export`);
+      return;
+    }
+    app.use(prefix, mod);
+    console.log(`Mounted ${prefix} -> ${relPath}`);
+  } catch (e) {
+    console.error(`ERROR mounting ${prefix} from ${relPath}:`, e.message);
+  }
 }
+
 mountIfExists('/api/clients',   './routes/clients');
-mountIfExists('/api/services', './routes/services');
+mountIfExists('/api/services',  './routes/services');
 mountIfExists('/api/users',     './routes/users');
 mountIfExists('/api',           './routes/uploads');
 mountIfExists('/api/metrics',   './routes/metrics');
-mountIfExists('/api/dashboard', './routes/dashboard'); // << importante
+mountIfExists('/api/dashboard', './routes/dashboard');
 
-// 404 API
+// 404 para endpoints API no encontrados
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
-// Error handler
+// Manejador de errores no capturados
 app.use((err, _req, res, _next) => {
   console.error('UNCAUGHT ERROR:', err);
   res.status(500).json({ error: 'Internal error' });
 });
 
-// Start
+// Arranque
 const PORT = Number(process.env.PORT || 3001);
 app.listen(PORT, () => console.log(`CRM backend running on port ${PORT}`));
-

@@ -1,233 +1,194 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { getToken } from '../lib/api';
+// src/pages/Clients.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { listClients, deleteClient, getRole } from "../lib/api";
+
+function safe(v) {
+  return v ?? "-";
+}
+function renderName(c) {
+  const first = c.first_name?.trim() || "";
+  const last = c.last_name?.trim() || "";
+  const full = `${first} ${last}`.trim();
+  return full || c.name || "-";
+}
 
 export default function Clients() {
-  const nav = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  // --- Estado derivado de la URL (con defaults y clamps)
-  const urlPage  = Number.parseInt(searchParams.get('page')  || '1', 10);
-  const urlLimit = Number.parseInt(searchParams.get('limit') || '10', 10);
-  const urlQ     = searchParams.get('q')    || '';
-  const urlSort  = (searchParams.get('sort') || 'created_at').toLowerCase();
-  const urlDir   = (searchParams.get('dir')  || 'desc').toLowerCase();
-
-  const page  = Number.isFinite(urlPage)  && urlPage  > 0 ? urlPage  : 1;
-  const limit = Number.isFinite(urlLimit) && urlLimit > 0 ? urlLimit : 10;
-  const q     = urlQ;
-  const sort  = ['id','first_name','last_name','email','phone','created_at'].includes(urlSort) ? urlSort : 'created_at';
-  const dir   = urlDir === 'asc' ? 'asc' : 'desc';
-
-  // Mantener el input de búsqueda sincronizado con la URL
-  const [qInput, setQInput] = useState(q);
-  useEffect(() => { setQInput(q); }, [q]);
-
-  // Autocompletar params faltantes (una vez)
-  useEffect(() => {
-    const needFix = (!searchParams.get('page')) || (!searchParams.get('limit')) || (!searchParams.get('sort')) || (!searchParams.get('dir'));
-    if (needFix) {
-      const next = new URLSearchParams(searchParams);
-      if (!next.get('page'))  next.set('page', String(page));
-      if (!next.get('limit')) next.set('limit', String(limit));
-      if (!next.get('sort'))  next.set('sort', sort);
-      if (!next.get('dir'))   next.set('dir', dir);
-      setSearchParams(next, { replace: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Data
-  const [rows, setRows] = useState([]);
-  const [meta, setMeta] = useState({
-    page: 1, limit: 10, total: 0, totalPages: 1, hasPrev: false, hasNext: false,
-  });
+  const [q, setQ] = useState("");
+  const [limit, setLimit] = useState(10);
+  const [page, setPage] = useState(1);
+  const [order, setOrder] = useState("name_asc"); // name_asc | name_desc | city_asc | created_desc | created_asc
+  const [data, setData] = useState({ items: [], page: 1, totalPages: 1, hasPrev: false, hasNext: false, total: 0 });
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState("");
 
-  // Fetch cuando cambian q/page/limit/sort/dir
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      setLoading(true);
-      setErr('');
-      try {
-        const token = getToken();
-        const qs = new URLSearchParams({ q, page: String(page), limit: String(limit), sort, dir });
-        const res = await fetch(`/api/clients?${qs.toString()}`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+  const isAdmin = getRole() === "admin";
 
-        if (Array.isArray(data)) {
-          if (!cancelled) {
-            setRows(data);
-            setMeta({ page, limit, total: data.length, totalPages: 1, hasPrev: false, hasNext: false });
-          }
-        } else {
-          const top = data || {};
-          const items = top.items || [];
-          const total = Number(top.total ?? items.length) || 0;
-          const totalPages = Number(top.totalPages ?? Math.max(1, Math.ceil(total / limit)));
-          const hasPrev = Boolean(top.hasPrev ?? (page > 1));
-          const hasNext = Boolean(top.hasNext ?? (page < totalPages));
-          if (!cancelled) {
-            setRows(items);
-            setMeta({ page, limit, total, totalPages, hasPrev, hasNext });
-          }
-        }
-      } catch (_e) {
-        if (!cancelled) setErr('Failed to load clients');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  async function fetchData({ keepPage = false } = {}) {
+    setLoading(true);
+    setErr("");
+    try {
+      const res = await listClients({ q, page: keepPage ? page : 1, limit });
+      setData({
+        items: res.items || [],
+        page: res.page || 1,
+        totalPages: res.totalPages || 1,
+        hasPrev: !!res.hasPrev,
+        hasNext: !!res.hasNext,
+        total: res.total ?? (res.items ? res.items.length : 0),
+      });
+      if (!keepPage) setPage(1);
+    } catch (e) {
+      setErr(e?.message || "Failed to load clients.");
+    } finally {
+      setLoading(false);
     }
-    run();
-    return () => { cancelled = true; };
-  }, [q, page, limit, sort, dir]);
+  }
 
-  // Handlers (escriben a la URL)
-  const changeLimit = (newLimit) => {
-    const next = new URLSearchParams(searchParams);
-    next.set('limit', String(newLimit));
-    next.set('page', '1');
-    setSearchParams(next);
-  };
-
-  const goPrev = () => {
-    if (!meta.hasPrev) return;
-    const next = new URLSearchParams(searchParams);
-    next.set('page', String(Math.max(1, page - 1)));
-    setSearchParams(next);
-  };
-
-  const goNext = () => {
-    if (!meta.hasNext) return;
-    const next = new URLSearchParams(searchParams);
-    next.set('page', String(page + 1));
-    setSearchParams(next);
-  };
-
-  // Debounce de búsqueda -> actualiza URL y resetea page=1
   useEffect(() => {
-    const t = setTimeout(() => {
-      if (qInput === q) return;
-      const next = new URLSearchParams(searchParams);
-      next.set('q', qInput);
-      next.set('page', '1');
-      setSearchParams(next);
-    }, 300);
-    return () => clearTimeout(t);
+    fetchData({ keepPage: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qInput]);
+  }, [page, limit]);
 
-  // Ordenamiento: click en header -> toggle asc/desc; en nuevo col, default asc (id/created_at default desc)
-  const setSortBy = (col) => {
-    const next = new URLSearchParams(searchParams);
-    let nextDir = 'asc';
-    if (col === sort) {
-      nextDir = dir === 'asc' ? 'desc' : 'asc';
-    } else {
-      nextDir = (col === 'id' || col === 'created_at') ? 'desc' : 'asc';
+  // Ordenamiento en el cliente (no pintamos city/created pero podemos usarlos)
+  const sortedItems = useMemo(() => {
+    const items = [...(data.items || [])];
+    const by = {
+      name_asc: (a, b) => renderName(a).localeCompare(renderName(b), undefined, { sensitivity: "base" }),
+      name_desc: (a, b) => -renderName(a).localeCompare(renderName(b), undefined, { sensitivity: "base" }),
+      city_asc: (a, b) => (a.city || "").localeCompare(b.city || "", undefined, { sensitivity: "base" }),
+      created_asc: (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0),
+      created_desc: (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+    }[order] || ((a, b) => 0);
+    return items.sort(by);
+  }, [data.items, order]);
+
+  function gotoPage(p) {
+    const next = Math.max(1, Math.min(p, data.totalPages || 1));
+    setPage(next);
+  }
+
+  async function onDelete(id) {
+    if (!isAdmin) return;
+    if (!confirm("Are you sure you want to delete this client? This action cannot be undone.")) return;
+    try {
+      await deleteClient(id);
+      // Si al borrar queda vacía la página, retrocede una
+      const remains = (data.items?.length || 1) - 1;
+      const newPage = remains === 0 && page > 1 ? page - 1 : page;
+      setPage(newPage);
+      await fetchData({ keepPage: true });
+    } catch (e) {
+      alert(e?.message || "Failed to delete client.");
     }
-    next.set('sort', col);
-    next.set('dir', nextDir);
-    next.set('page', '1');
-    setSearchParams(next);
-  };
+  }
 
-  const caret = (col) => (sort === col ? (dir === 'asc' ? ' ▲' : ' ▼') : '');
+  function applyFilters() {
+    setPage(1);
+    fetchData({ keepPage: false });
+  }
 
-  // Derivados para texto
-  const showingFrom = useMemo(() => (meta.total === 0 ? 0 : (meta.page - 1) * meta.limit + 1), [meta]);
-  const showingTo   = useMemo(() => Math.min(meta.page * meta.limit, meta.total), [meta]);
+  function changeLimit(v) {
+    const num = parseInt(v, 10) || 10;
+    setLimit(num);
+    setPage(1);
+  }
 
   return (
-    <div>
-      <div className="toolbar">
+    <div className="container">
+      <div className="page-header">
         <h1>Clients</h1>
-        <div className="toolbar-actions">
+        <div className="spacer" />
+        <Link className="btn primary" to="/clients/new">+ New Client</Link>
+      </div>
+
+      {/* Toolbar: búsqueda + orden + paginación */}
+      <div className="toolbar">
+        <div className="toolbar-left">
           <input
             className="input"
-            placeholder="Search..."
-            value={qInput}
-            onChange={e => setQInput(e.target.value)}
+            placeholder="Search (name, email, phone)…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => (e.key === "Enter" ? applyFilters() : null)}
           />
-          <select
-            className="input"
-            value={meta.limit}
-            onChange={e => changeLimit(Number(e.target.value))}
-            title="Results per page"
-          >
-            <option value={5}>5 / page</option>
-            <option value={10}>10 / page</option>
-            <option value={25}>25 / page</option>
-            <option value={50}>50 / page</option>
+          <select className="input" value={order} onChange={(e) => setOrder(e.target.value)} title="Sort by">
+            <option value="name_asc">Name (A→Z)</option>
+            <option value="name_desc">Name (Z→A)</option>
+            <option value="city_asc">City (A→Z)</option>
+            <option value="created_desc">Newest first</option>
+            <option value="created_asc">Oldest first</option>
           </select>
-          <button className="btn btn-primary" onClick={() => nav('/clients/new')}>
-            New Client
-          </button>
+          <button className="btn" onClick={applyFilters}>Apply</button>
+        </div>
+
+        <div className="toolbar-right">
+          <label className="muted">Rows</label>
+          <select className="input" value={limit} onChange={(e) => changeLimit(e.target.value)}>
+            <option value="5">5 / page</option>
+            <option value="10">10 / page</option>
+            <option value="25">25 / page</option>
+          </select>
         </div>
       </div>
 
-      {err && <div className="alert error">{err}</div>}
+      {err && <div className="alert">{err}</div>}
 
       <div className="table-wrap">
-        <table className="table">
+        <table className="table table-fixed">
+          <colgroup>
+            <col style={{ width: "84px" }} />           {/* ID */}
+            <col />                                      {/* Name (flex) */}
+            <col style={{ width: "22ch" }} />            {/* Email */}
+            <col style={{ width: "16ch" }} />            {/* Phone */}
+            <col style={{ width: "260px" }} />           {/* Actions */}
+          </colgroup>
+
           <thead>
             <tr>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('first_name')}>Name{caret('first_name')}</th>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('email')}>Email{caret('email')}</th>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('phone')}>Phone{caret('phone')}</th>
-              <th style={{cursor:'pointer'}} onClick={() => setSortBy('created_at')}>Created{caret('created_at')}</th>
-              <th style={{textAlign:'right'}}>Actions</th>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Phone</th>
+              {/* City y Created quedan ocultas a nivel UI */}
+              <th className="actions-cell">Actions</th>
             </tr>
           </thead>
+
           <tbody>
-            {rows.map(c => {
-              const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)';
-              return (
-                <tr key={c.id}>
-                  <td>{name}</td>
-                  <td>{c.email || '-'}</td>
-                  <td>{c.phone || '-'}</td>
-                  <td>{c.created_at ? new Date(c.created_at).toLocaleString() : '-'}</td>
-                  <td style={{textAlign:'right'}}>
+            {loading && (
+              <tr><td colSpan={5} style={{ textAlign: "center" }}>Loading…</td></tr>
+            )}
+
+            {!loading && sortedItems.map(c => (
+              <tr key={c.id}>
+                <td className="nowrap">#{c.id}</td>
+                <td><span className="ellipsis" title={renderName(c)}>{renderName(c)}</span></td>
+                <td><span className="ellipsis" title={c.email || "-"}>{safe(c.email)}</span></td>
+                <td className="nowrap">{safe(c.phone_mobile || c.phone || c.phone_home)}</td>
+
+                <td className="actions-cell">
+                  <div className="actions">
                     <Link className="btn" to={`/clients/${c.id}`}>View</Link>
-                  </td>
-                </tr>
-              );
-            })}
-            {!rows.length && (
-              <tr><td colSpan={5} style={{textAlign:'center', color:'#64748b'}}>No results</td></tr>
+                    {isAdmin && <Link className="btn primary" to={`/clients/${c.id}/edit`}>Edit</Link>}
+                    {isAdmin && <button className="btn danger" onClick={() => onDelete(c.id)}>Delete</button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+
+            {!loading && sortedItems.length === 0 && (
+              <tr><td colSpan={5} style={{ textAlign: "center", color: "#94a3b8" }}>No results</td></tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* Paginador (arriba) */}
+      {/* Paginación */}
       <div className="pager">
-        <button className="btn" onClick={goPrev} disabled={!meta.hasPrev}>Prev</button>
-        <div className="pager-info">
-          {meta.total > 0
-            ? <>Showing {showingFrom}-{showingTo} of {meta.total} (page {meta.page} / {meta.totalPages})</>
-            : <>No results</>}
-        </div>
-        <button className="btn" onClick={goNext} disabled={!meta.hasNext}>Next</button>
-      </div>
-
-      {/* overlay del spinner */}
-      {loading && (
-        <div className="loading-overlay">
-          <div className="spinner" />
-        </div>
-      )}
-
-      {/* Paginador (abajo) */}
-      <div className="pager" style={{ justifyContent: 'flex-end' }}>
-        <button className="btn" onClick={goPrev} disabled={!meta.hasPrev}>Prev</button>
-        <button className="btn" onClick={goNext} disabled={!meta.hasNext}>Next</button>
+        <button className="btn" disabled={!data.hasPrev || loading} onClick={() => gotoPage((data.page || 1) - 1)}>◀ Prev</button>
+        <span className="muted">Page {data.page || 1} / {data.totalPages || 1}</span>
+        <button className="btn" disabled={!data.hasNext || loading} onClick={() => gotoPage((data.page || 1) + 1)}>Next ▶</button>
       </div>
     </div>
   );

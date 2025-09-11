@@ -1,0 +1,144 @@
+// src/pages/UserNew.jsx
+import React, { useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { createUser } from "../lib/api";
+
+export default function UserNew() {
+  const navigate = useNavigate();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    role: "client",
+    password: "",
+  });
+
+  const onChange = (e) => {
+    const { name, value } = e.target;
+    setForm((f) => ({ ...f, [name]: value }));
+  };
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    try {
+      setSaving(true);
+      const payload = {
+        first_name: form.first_name?.trim() || null,
+        last_name:  form.last_name?.trim()  || null,
+        email:      form.email?.trim(),
+        phone:      form.phone?.trim()      || null,
+        role:       form.role,
+        password:   form.password, // requerido para alta
+      };
+      const created = await createUser(payload);
+      navigate(`/users/${created.id}`);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo crear el usuario. Revisa los datos.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="page">
+      <div className="container">
+        <div className="content-card">
+          <div className="card-header">
+            <div className="title-wrap">
+              <h1 className="page-title">New User</h1>
+              <div className="subtitle muted">Create a user</div>
+            </div>
+            <div className="actions">
+              <Link className="btn" to="/users">Back</Link>
+            </div>
+          </div>
+
+          <div className="card-body">
+            {error && <div className="alert error">{error}</div>}
+
+            <form onSubmit={onSubmit} className="form-grid">
+              <div className="form-row">
+                <div className="form-field">
+                  <label>First name</label>
+                  <input
+                    name="first_name"
+                    value={form.first_name}
+                    onChange={onChange}
+                    placeholder="John"
+                  />
+                </div>
+                <div className="form-field">
+                  <label>Last name</label>
+                  <input
+                    name="last_name"
+                    value={form.last_name}
+                    onChange={onChange}
+                    placeholder="Doe"
+                  />
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    name="email"
+                    value={form.email}
+                    onChange={onChange}
+                    placeholder="user@example.com"
+                    required
+                  />
+                </div>
+                <div className="form-field">
+                  <label>Phone</label>
+                  <input
+                    name="phone"
+                    value={form.phone}
+                    onChange={onChange}
+                    placeholder="555-1234"
+                  />
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Role</label>
+                  <select name="role" value={form.role} onChange={onChange}>
+                    <option value="admin">admin</option>
+                    <option value="tech">tech</option>
+                    <option value="client">client</option>
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label>Password</label>
+                  <input
+                    type="password"
+                    name="password"
+                    value={form.password}
+                    onChange={onChange}
+                    placeholder="••••••••"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-actions" style={{ justifyContent: "flex-end", gap: 12 }}>
+                <Link className="btn" to="/users">Cancel</Link>
+                <button className="btn primary" type="submit" disabled={saving}>
+                  {saving ? "Creating…" : "Create user"}
+                </button>
+              </div>
+            </form>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}

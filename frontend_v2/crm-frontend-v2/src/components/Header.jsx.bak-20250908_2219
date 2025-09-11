@@ -1,15 +1,12 @@
-// src/components/Header.jsx
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { getToken, clearToken, getRole } from "../lib/api";
+import { getToken, clearToken } from "../lib/api";
 
 export default function Header(){
   const loc = useLocation();
   const nav = useNavigate();
   const authed = !!getToken();
-  const role = getRole();
 
-  const isActive = (path) =>
-    loc.pathname === path || loc.pathname.startsWith(path + "/");
+  const isActive = (path) => loc.pathname.startsWith(path);
 
   const doLogout = () => {
     clearToken();
@@ -25,20 +22,19 @@ export default function Header(){
             alt="Total Repair Now"
             onError={(e)=>{ e.currentTarget.style.display='none'; }}
           />
-          <span className="brand-title">TRN CRM</span>
+          <span>TRN CRM</span>
         </Link>
 
         {authed && (
           <nav className="nav">
             <Link className={isActive("/dashboard") ? "active" : ""} to="/dashboard">Dashboard</Link>
             <Link className={isActive("/clients") ? "active" : ""} to="/clients">Clients</Link>
-            <Link className={isActive("/services") ? "active" : ""} to="/services">Services</Link>
-            {role === "admin" && (
-              <Link className={isActive("/users") ? "active" : ""} to="/users">Users</Link>
-            )}
+            <Link className={isActive("/users") ? "active" : ""} to="/users">Users</Link>
+            <Link className={`nav ${location.pathname.startsWith('/services') ? 'active' : ''}`} to="/services">Services</Link>
           </nav>
         )}
 
+        <div className="spacer" />
         {authed ? (
           <button className="btn" onClick={doLogout}>Logout</button>
         ) : (
@@ -48,4 +44,3 @@ export default function Header(){
     </header>
   );
 }
-

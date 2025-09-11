@@ -189,7 +189,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
 
-    res.json(mapUser(rows[0]));   // ← SIEMPRE el mismo shape que GET/POST
+    res.json(mapUser(rows[0]));
   } catch (e) {
     if (e?.code === '23505') {
       return res.status(409).json({ error: 'Email already in use' });
@@ -198,7 +198,6 @@ router.put('/:id', requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Internal error' });
   }
 });
-
 
 /** DELETE /api/users/:id */
 router.delete('/:id', requireAdmin, async (req, res) => {

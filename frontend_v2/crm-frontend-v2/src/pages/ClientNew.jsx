@@ -1,71 +1,243 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { apiFetch } from '../lib/api';
+// src/pages/ClientNew.jsx
+import React, { useState, useMemo } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { createClient, isAdminFromToken } from "../lib/api";
 
-export default function ClientNew(){
-  const nav = useNavigate();
-  const [form, setForm] = useState({ first_name:'', last_name:'', email:'', phone:'' });
+export default function ClientNew() {
+  const navigate = useNavigate();
+  const isAdmin = isAdminFromToken();
+
+  // Campos alineados a Edit Client (mismos nombres/orden)
+  const [first_name, setFirstName] = useState("");
+  const [last_name, setLastName]   = useState("");
+  const [email, setEmail]         = useState("");
+  const [phone, setPhone]         = useState("");
+
+  const [address_line1, setAddress1] = useState("");
+  const [address_line2, setAddress2] = useState("");
+  const [city, setCity]               = useState("");
+  const [state, setState]             = useState("");
+  const [postal_code, setPostal]      = useState("");
+  const [country, setCountry]         = useState("");
+
+  const [warranty_company, setWarranty] = useState("");
+  const [lead_source, setLeadSource]    = useState("");
+  const [referred_by, setReferredBy]    = useState("");
+
+  const [notes, setNotes] = useState("");
+
   const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState("");
 
-  const onChange = (e) => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  const fullName = useMemo(() => {
+    const name = [first_name, last_name].filter(Boolean).join(" ").trim();
+    return name || email || "-";
+  }, [first_name, last_name, email]);
 
-  const onSubmit = async (e) => {
+  async function onSubmit(e) {
     e.preventDefault();
-    setSaving(true); setErr('');
-    try{
-      const created = await apiFetch('/clients', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify(form)
-      });
-      if(created && created.id){
-        nav(`/clients/${created.id}`);
+    setErr("");
+    setSaving(true);
+    try {
+      const payload = {
+        first_name,
+        last_name,
+        email,
+        phone,
+        address_line1,
+        address_line2,
+        city,
+        state,
+        postal_code,
+        country,
+        warranty_company,
+        lead_source,
+        referred_by,
+        notes,
+      };
+
+      const res = await createClient(payload);
+      if (res?.id) {
+        navigate(`/clients/${res.id}`);
       } else {
-        nav('/clients'); // fallback
+        navigate("/clients");
       }
-    }catch(ex){
-      setErr('Failed to create client');
-    }finally{
+    } catch (ex) {
+      console.error("CREATE /clients error:", ex);
+      setErr(ex?.message || "Error creating client");
+    } finally {
       setSaving(false);
     }
-  };
+  }
 
   return (
-    <div>
-      <div className="toolbar">
-        <h1>New Client</h1>
+    <div className="container">
+      {/* Header idéntico a Edit (solo cambia el título) */}
+      <div className="page-header">
+        <div>
+          <h1>New Client</h1>
+          <p className="muted">Create a new customer and save all their details.</p>
+        </div>
+        <div className="actions">
+          <Link className="btn" to="/clients">Back</Link>
+        </div>
       </div>
 
-      {err && <div className="alert error">{err}</div>}
+      {err && <div className="alert error" style={{ marginBottom: 12 }}>{err}</div>}
 
-      <form className="card form" onSubmit={onSubmit}>
-        <div className="form-grid">
-          <div className="form-field">
+      <div className="card">
+        <form onSubmit={onSubmit} className="form-grid">
+          {/* Nombre */}
+          <div className="field">
             <label>First name</label>
-            <input className="input" name="first_name" value={form.first_name} onChange={onChange} />
+            <input
+              value={first_name}
+              onChange={e=>setFirstName(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
           </div>
-          <div className="form-field">
+          <div className="field">
             <label>Last name</label>
-            <input className="input" name="last_name" value={form.last_name} onChange={onChange} />
+            <input
+              value={last_name}
+              onChange={e=>setLastName(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
           </div>
-          <div className="form-field">
+          <div className="field">
             <label>Email</label>
-            <input className="input" type="email" name="email" value={form.email} onChange={onChange} />
+            <input
+              value={email}
+              onChange={e=>setEmail(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+              type="email"
+            />
           </div>
-          <div className="form-field">
+          <div className="field">
             <label>Phone</label>
-            <input className="input" name="phone" value={form.phone} onChange={onChange} />
+            <input
+              value={phone}
+              onChange={e=>setPhone(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
           </div>
-        </div>
 
-        <div style={{ display:'flex', gap:8, marginTop:16 }}>
-          <button className="btn" type="button" onClick={()=>nav('/clients')}>Cancel</button>
-          <button className="btn btn-primary" type="submit" disabled={saving}>
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-        </div>
-      </form>
+          {/* Dirección */}
+          <div className="field" style={{gridColumn:"1 / -1"}}>
+            <label>Address line 1</label>
+            <input
+              value={address_line1}
+              onChange={e=>setAddress1(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+          <div className="field" style={{gridColumn:"1 / -1"}}>
+            <label>Address line 2</label>
+            <input
+              value={address_line2}
+              onChange={e=>setAddress2(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+
+          <div className="field">
+            <label>City</label>
+            <input
+              value={city}
+              onChange={e=>setCity(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+          <div className="field">
+            <label>State</label>
+            <input
+              value={state}
+              onChange={e=>setState(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+          <div className="field">
+            <label>Postal code</label>
+            <input
+              value={postal_code}
+              onChange={e=>setPostal(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+          <div className="field">
+            <label>Country</label>
+            <input
+              value={country}
+              onChange={e=>setCountry(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+
+          {/* Extra / fuente de cliente */}
+          <div className="field">
+            <label>Warranty company</label>
+            <input
+              value={warranty_company}
+              onChange={e=>setWarranty(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+          <div className="field">
+            <label>Lead source</label>
+            <input
+              value={lead_source}
+              onChange={e=>setLeadSource(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+          <div className="field">
+            <label>Referred by</label>
+            <input
+              value={referred_by}
+              onChange={e=>setReferredBy(e.target.value)}
+              disabled={!isAdmin}
+              placeholder=" "
+            />
+          </div>
+
+          {/* Notas y preview */}
+          <div className="field" style={{gridColumn:"1 / -1"}}>
+            <label>Notes</label>
+            <textarea
+              value={notes}
+              onChange={e=>setNotes(e.target.value)}
+              disabled={!isAdmin}
+              rows={4}
+              placeholder="Optional"
+            />
+          </div>
+
+          <div className="field" style={{gridColumn:"1 / -1"}}>
+            <label>Preview</label>
+            <div className="muted">{fullName}</div>
+          </div>
+
+          {/* Acciones */}
+          <div className="form-actions">
+            <Link className="btn" to="/clients">Cancel</Link>
+            <button className="btn primary" type="submit" disabled={!isAdmin || saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

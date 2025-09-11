@@ -1,0 +1,178 @@
+// routes/users.js
+const express = require('express');
+const router = express.Router();
+const db = require('../db'); // ajusta si tu helper es otro
+// Si tienes middlewares de auth/roles, déjalos. Si no, puedes quitar requireAuth/requireRole.
+const { requireAuth, requireRole } = require('../middleware/roles');
+
+const toInt = (v, d = 0) => {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : d;
+};
+
+const mapUser = (r) => ({
+  id: r.id,
+  email: r.email || null,
+  role: r.role || null,
+  phone: r.phone || null,
+  created_at: r.created_at
+});
+
+/* ============================
+   LIST (paginado + filtros)
+============================ */
+router.get('/', requireAuth, async (req, res) => {
+  try {
+    const page  = Math.max(1, toInt(req.query.page, 1));
+    const limit = Math.min(100, Math.max(1, toInt(req.query.limit, 10)));
+    const offset = (page - 1) * limit;
+
+    const q    = (req.query.q || '').trim();
+    const role = (req.query.role || '').trim();
+
+    // Filtros: si hay q -> busca por email/phone; si hay role -> AND role = ...
+    const filters = [];
+    const params  = [];
+
+    if (q) {
+      // Podemos reutilizar el mismo parámetro $1 en dos columnas
+      params.push(`%${q}%`);
+      filters.push(`(email ILIKE $${params.length} OR phone ILIKE $${params.length})`);
+    }
+    if (role) {
+      params.push(role);
+      filters.push(`role = $${params.length}`);
+    }
+
+    const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+    // total
+    const totalSql = `SELECT COUNT(*)::int AS total FROM users ${whereSql}`;
+    const totalRow = await db.query(totalSql, params);
+    const total = totalRow.rows?.[0]?.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    // lista
+    const listSql = `
+      SELECT id, email, role, phone, created_at
+      FROM users
+      ${whereSql}
+      ORDER BY id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+    const list = await db.query(listSql, params);
+    const items = list.rows.map(mapUser);
+
+    res.json({
+      page, limit, total, totalPages,
+      hasPrev: page > 1,
+      hasNext: page < totalPages,
+      items
+    });
+  } catch (e) {
+    console.error('GET /users error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/* ============================
+   VIEW
+============================ */
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const id = toInt(req.params.id, 0);
+    if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+    const r = await db.query(
+      `SELECT id, email, role, phone, created_at FROM users WHERE id = $1`,
+      [id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json(mapUser(r.rows[0]));
+  } catch (e) {
+    console.error('GET /users/:id error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/* ============================
+   CREATE
+============================ */
+router.post('/', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { email, role = 'client', phone = null } = req.body || {};
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    const r = await db.query(
+      `INSERT INTO users (email, role, phone)
+       VALUES ($1,$2,$3)
+       RETURNING id, email, role, phone, created_at`,
+      [email, role, phone]
+    );
+    res.status(201).json(mapUser(r.rows[0]));
+  } catch (e) {
+    console.error('POST /users error:', e);
+    if (String(e.message || '').includes('users_email_key')) {
+      return res.status(409).json({ error: 'Email already exists' });
+    }
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/* ============================
+   UPDATE
+============================ */
+router.put('/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const id = toInt(req.params.id, 0);
+    if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+    const { email, role, phone } = req.body || {};
+    const sets = [];
+    const params = [];
+
+    const push = (frag, val) => {
+      params.push(val);
+      sets.push(`${frag} = $${params.length}`);
+    };
+
+    if (email !== undefined) push('email', email);
+    if (role  !== undefined) push('role', role);
+    if (phone !== undefined) push('phone', phone);
+
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+
+    params.push(id);
+    const sql = `
+      UPDATE users SET ${sets.join(', ')}, updated_at = NOW()
+      WHERE id = $${params.length}
+      RETURNING id, email, role, phone, created_at
+    `;
+    const r = await db.query(sql, params);
+    if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+
+    res.json(mapUser(r.rows[0]));
+  } catch (e) {
+    console.error('PUT /users/:id error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/* ============================
+   DELETE
+============================ */
+router.delete('/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const id = toInt(req.params.id, 0);
+    if (!id) return res.status(400).json({ error: 'Invalid id' });
+
+    const r = await db.query(`DELETE FROM users WHERE id = $1`, [id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('DELETE /users/:id error:', e);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+module.exports = router;

@@ -1,128 +1,161 @@
-import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { getToken } from '../lib/api'
-import './Dashboard.css'   // <— IMPORTA EL CSS LOCAL
+// src/pages/Dashboard.jsx
+import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { getDashboard, listServices } from "../lib/api";
 
-export default function Dashboard() {
-  const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState('')
-  const [totals, setTotals] = useState({ clients: 0, users: 0, services: 0 })
-  const [series, setSeries] = useState({ servicesPerWeek: [] })
+function safe(v){ return v ?? "-"; }
+function fmtMoney(n){
+  const num = Number(n ?? 0);
+  return num.toLocaleString(undefined, { style:"currency", currency:"USD" });
+}
+function WO(id){ return `WO-${String(id).padStart(6,"0")}`; }
 
-  useEffect(() => {
-    let abort = false
-    ;(async () => {
-      setLoading(true)
-      setErr('')
-      try {
-        const res = await fetch('/api/dashboard', {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${getToken() || ''}`,
-          },
-        })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-        if (abort) return
+export default function Dashboard(){
+  const [dash, setDash] = useState(null);
+  const [err, setErr] = useState("");
+  const [recent, setRecent] = useState([]);
+  const [loadingRecent, setLoadingRecent] = useState(false);
 
-        if (data?.totals) setTotals(data.totals)
-        if (data?.series) setSeries(data.series)
-      } catch (_e) {
-        if (!abort) setErr('Error loading dashboard')
-      } finally {
-        if (!abort) setLoading(false)
+  useEffect(()=>{
+    let alive = true;
+    (async ()=>{
+      try{
+        const d = await getDashboard();
+        if(!alive) return;
+        // Normaliza por si faltan props
+        const normalized = {
+          totalClients: d?.totalClients ?? 0,
+          openServices: d?.openServices ?? 0,
+          revenueMonth: d?.revenueMonth ?? 0,
+          revenueYtd: d?.revenueYtd ?? 0,
+        };
+        setDash(normalized);
+      }catch(e){
+        if(!alive) return;
+        setErr(e?.message || "Failed to load dashboard.");
       }
-    })()
-    return () => { abort = true }
-  }, [])
+    })();
+    return ()=>{ alive = false; };
+  },[]);
+
+  useEffect(()=>{
+    let alive = true;
+    setLoadingRecent(true);
+    (async ()=>{
+      try{
+        const r = await listServices({ page:1, limit:5 });
+        if(!alive) return;
+        setRecent(r?.items || []);
+      }catch(_e){
+        if(!alive) return;
+        setRecent([]);
+      }finally{
+        if(alive) setLoadingRecent(false);
+      }
+    })();
+    return ()=>{ alive = false; };
+  },[]);
+
+  // Mini bar chart demostrativo (datos fijos si el backend no trae series)
+  const demoMonths = ["Apr","May","Jun","Jul","Aug","Sep"];
+  const demoValues = [10,14,9,18,16,20];
+  const maxV = Math.max(...demoValues, 1);
 
   return (
-    <div className="dashboard-page">
-      <div className="toolbar">
+    <div className="container">
+      <div className="page-header">
         <h1>Dashboard</h1>
+        <div className="spacer" />
       </div>
 
-      {err && <div className="alert error">{err}</div>}
+      {err && <div className="alert">{err}</div>}
 
-      <div className="dash-row">
-        {/* Clients */}
-        <section className="dash-card">
-          <header className="dash-card__header">
-            <h2>Clients</h2>
-            <Link className="btn btn-primary" to="/clients">View</Link>
-          </header>
-          <div className="kpi">
-            <div className="kpi-value">{totals.clients}</div>
-            <div className="kpi-label">Total clients</div>
-          </div>
+      <div className="dash-grid">
+        {/* KPI - Clients */}
+        <div className="dash-card">
+          <div className="dash-card__header"><h2>Clients</h2></div>
           <div className="dash-card__body">
-            <table className="table table-compact">
-              <tbody>
-                <tr>
-                  <td>Registered</td>
-                  <td style={{textAlign:'right'}}>{totals.clients}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* Users */}
-        <section className="dash-card">
-          <header className="dash-card__header">
-            <h2>Users</h2>
-            <Link className="btn" to="/users">View</Link>
-          </header>
-          <div className="kpi">
-            <div className="kpi-value">{totals.users}</div>
-            <div className="kpi-label">Total users</div>
-          </div>
-          <div className="dash-card__body">
-            <table className="table table-compact">
-              <tbody>
-                <tr>
-                  <td>Active</td>
-                  <td style={{textAlign:'right'}}>{totals.users}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        {/* Services */}
-        <section className="dash-card">
-          <header className="dash-card__header">
-            <h2>Services</h2>
-            <span className="badge">coming soon</span>
-          </header>
-          <div className="kpi">
-            <div className="kpi-value">{totals.services}</div>
-            <div className="kpi-label">Total services</div>
-          </div>
-          <div className="dash-card__body">
-            <table className="table table-compact">
-              <tbody>
-                {Array.isArray(series.servicesPerWeek) && series.servicesPerWeek.slice(0,4).map((w, i) => (
-                  <tr key={i}>
-                    <td>{new Date(w.week).toLocaleDateString()}</td>
-                    <td style={{textAlign:'right'}}>{w.count}</td>
-                  </tr>
+            <div className="kpi">
+              <div className="kpi-value">{dash ? dash.totalClients : "…"}</div>
+              <div className="kpi-label">total</div>
+            </div>
+            <div className="chart-container" style={{marginTop:10}}>
+              <svg viewBox="0 0 200 80" preserveAspectRatio="none">
+                {demoValues.map((v,i)=>(
+                  <rect key={i} x={i*34+6} y={80-(v/maxV*70)} width="24" height={(v/maxV*70)} fill="#0ea5e9" rx="4" />
                 ))}
-                {!Array.isArray(series.servicesPerWeek) || !series.servicesPerWeek.length ? (
-                  <tr><td colSpan={2} style={{textAlign:'center', color:'#64748b'}}>No data</td></tr>
-                ) : null}
-              </tbody>
-            </table>
+                {demoMonths.map((m,i)=>(
+                  <text key={m} x={i*34+18} y={78} fontSize="8" textAnchor="middle" fill="#64748b">{m}</text>
+                ))}
+              </svg>
+            </div>
           </div>
-        </section>
-      </div>
-
-      {loading && (
-        <div className="loading-overlay">
-          <div className="spinner" />
         </div>
-      )}
-    </div>
-  )
-}
 
+        {/* KPI - Open Services */}
+        <div className="dash-card">
+          <div className="dash-card__header"><h2>Open Services</h2></div>
+          <div className="dash-card__body">
+            <div className="kpi">
+              <div className="kpi-value">{dash ? dash.openServices : "…"}</div>
+              <div className="kpi-label">currently open</div>
+            </div>
+            <div className="chart-container" style={{marginTop:10}}>
+              <svg viewBox="0 0 200 80" preserveAspectRatio="none">
+                {[8,6,7,9,12,10].map((v,i)=>(
+                  <circle key={i} cx={i*34+18} cy={80-(v/12*70)} r="3" fill="#0ea5e9" />
+                ))}
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI - Revenue (Month / YTD) */}
+        <div className="dash-card">
+          <div className="dash-card__header"><h2>Revenue</h2></div>
+          <div className="dash-card__body">
+            <div className="kpi"><div className="kpi-value">{dash ? fmtMoney(dash.revenueMonth) : "…"}</div><div className="kpi-label">this month</div></div>
+            <div className="kpi" style={{marginTop:6}}><div className="kpi-value" style={{fontSize:22}}>{dash ? fmtMoney(dash.revenueYtd) : "…"}</div><div className="kpi-label">YTD</div></div>
+          </div>
+        </div>
+
+        {/* Services (con botón View) */}
+        <div className="dash-card">
+          <div className="dash-card__header">
+            <h2>Services</h2>
+            <Link to="/services" className="btn">View</Link>
+          </div>
+          <div className="dash-card__body">
+            <div style={{fontSize:14, color:'#64748b', marginBottom:8}}>Recent services</div>
+            <div className="table-wrap">
+              <table className="table table-compact">
+                <thead>
+                  <tr>
+                    <th>WO</th><th>Service</th><th>Total</th><th>Status</th><th>Created</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loadingRecent && <tr><td colSpan={5} style={{textAlign:"center"}}>Loading…</td></tr>}
+                  {!loadingRecent && recent.map(s=>(
+                    <tr key={s.id}>
+                      <td><Link to={`/services/${s.id}`}>{WO(s.id)}</Link></td>
+                      <td><span className="ellipsis" title={s.service_name || "-"}>{safe(s.service_name)}</span></td>
+                      <td>{fmtMoney(s.total)}</td>
+                      <td>{safe(s.status)}</td>
+                      <td>{new Date(s.created_at).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                  {!loadingRecent && recent.length===0 && <tr><td colSpan={5} style={{textAlign:"center",color:"#94a3b8"}}>No data</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div style={{marginTop:10, display:"flex", gap:8}}>
+              <Link to="/services" className="btn">View</Link>
+              <Link to="/services/new" className="btn primary">+ New Service</Link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

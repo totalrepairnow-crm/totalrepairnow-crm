@@ -1,0 +1,79 @@
+'use strict';
+
+const express = require('express');
+const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt'); // usa bcryptjs si tu build de bcrypt nativo diera problemas
+const db = require('./db');
+
+const app = express();
+
+// Básicos
+app.disable('x-powered-by');
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: '2mb' }));
+
+// Healthcheck
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+// Login: devuelve { token, accessToken } (mismo valor)
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Missing credentials' });
+    }
+
+    const sql = 'SELECT id, email, password_hash, role FROM users WHERE email=$1 LIMIT 1';
+    const { rows } = await db.query(sql, [email]);
+    const user = rows[0];
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+    const payload = { sub: user.id, email: user.email, role: user.role || 'client' };
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({ token, accessToken: token });
+  } catch (err) {
+    console.error('LOGIN /api/login ERROR:', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Helper para montar rutas con log de error (no silencioso)
+function mount(prefix, file) {
+  try {
+    const router = require(file);
+    app.use(prefix, router);
+    console.log(`Mounted ${prefix} -> ${file}`);
+  } catch (e) {
+    console.error(`ERROR mounting ${prefix} from ${file}: ${e && e.message}`);
+  }
+}
+
+// Rutas API
+mount('/api/clients',   './routes/clients');
+mount('/api/services',  './routes/services');
+mount('/api/users',     './routes/users');   // ← importante
+mount('/api',           './routes/uploads');
+mount('/api/metrics',   './routes/metrics');
+mount('/api/dashboard', './routes/dashboard');
+
+// 404 API (después de montar todo)
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
+
+// Manejador de errores
+app.use((err, _req, res, _next) => {
+  console.error('UNCAUGHT ERROR:', err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'Internal error' });
+});
+
+// Arranque
+const PORT = Number(process.env.PORT || 3001);
+app.listen(PORT, () => console.log(`CRM backend running on port ${PORT}`));
+
+module.exports = app;
