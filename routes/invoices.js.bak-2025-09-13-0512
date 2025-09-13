@@ -1,0 +1,166 @@
+// routes/invoices.js
+const express = require('express');
+const router = express.Router();
+const db = require('../db');                 // Pool de pg ya usado en el resto de rutas
+const fetch = require('node-fetch');         // Asegúrate de tenerlo en package.json
+
+// ───────── Utilidades ─────────
+const toNumber = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// ───────── Health ─────────
+router.get('/health', (req, res) => {
+  return res.json({ ok: true });
+});
+
+// ───────── Detalle simple de factura (JSON) ─────────
+router.get('/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad_id' });
+
+    const invQ = await db.query(
+      `SELECT i.id, i.invoice_no, i.client_id, i.currency,
+              i.subtotal, i.discount, i.tax, i.total, i.status, i.created_at,
+              c.name AS client_name, c.email AS client_email
+         FROM invoices i
+    LEFT JOIN clients  c ON c.id = i.client_id
+        WHERE i.id = $1`,
+      [id]
+    );
+
+    if (invQ.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+
+    const linesQ = await db.query(
+      `SELECT id, invoice_id, service_id, description,
+              (quantity::numeric)::float8   AS quantity,
+              (unit_price::numeric)::float8 AS unit_price,
+              (line_total::numeric)::float8 AS line_total
+         FROM invoice_lines
+        WHERE invoice_id = $1
+        ORDER BY id`,
+      [id]
+    );
+
+    return res.json({ ...invQ.rows[0], lines: linesQ.rows });
+  } catch (e) {
+    console.error('GET /invoices/:id ERROR:', e);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// ───────── Helper para armar payload del proveedor ─────────
+function buildPayload(inv, lines, { enrichTo = false } = {}) {
+  const items = lines.map((l) => ({
+    name: l.description || '',
+    quantity: toNumber(l.quantity),
+    unit_cost: toNumber(l.unit_price),
+  }));
+
+  const toField = enrichTo
+    ? `${inv.client_name || ''}\n${inv.client_email || ''}`.trim() ||
+      inv.client_email || ''
+    : inv.client_email || '';
+
+  const payload = {
+    from: 'Total Repair Now\nCRM',
+    to: toField,                                        // Puede ser nombre+email o solo email
+    number: String(inv.invoice_no || inv.id),
+    currency: inv.currency || 'USD',
+    discounts: toNumber(inv.discount),                  // ¡IMPORTANTE! el proveedor espera "discounts"
+    tax: toNumber(inv.tax),
+    items,
+    // Etiquetas opcionales para que se vean con nombre correcto
+    fields: { discounts: 'Discount', tax: 'Tax' },
+  };
+
+  // Limpieza para no enviar NaN/0 innecesario
+  if (!payload.discounts) delete payload.discounts;
+  if (!payload.tax) delete payload.tax;
+
+  return payload;
+}
+
+// ───────── Generación de PDF ─────────
+// GET /api/invoices/:id/pdf
+// Query params:
+//   - debug=1       -> devuelve JSON con el payload (no llama al proveedor)
+//   - upstream=1    -> llama al proveedor pero devuelve su status y body como JSON (diagnóstico)
+//   - enrich_to=1   -> pone "to" como "Nombre\nEmail" en vez de solo email
+router.get('/:id/pdf', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const debug = 'debug' in req.query;
+  const probe = 'upstream' in req.query;
+  const enrich = req.query.enrich_to === '1' || req.query.enrich_to === 'true';
+
+  try {
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'bad_id' });
+
+    const invQ = await db.query(
+      `SELECT i.id, i.invoice_no, i.client_id, i.currency,
+              i.subtotal, i.discount, i.tax,
+              c.name AS client_name, c.email AS client_email
+         FROM invoices i
+    LEFT JOIN clients  c ON c.id = i.client_id
+        WHERE i.id = $1`,
+      [id]
+    );
+    if (invQ.rowCount === 0) return res.status(404).json({ error: 'Not found' });
+
+    const linesQ = await db.query(
+      `SELECT description,
+              (quantity::numeric)::float8   AS quantity,
+              (unit_price::numeric)::float8 AS unit_price
+         FROM invoice_lines
+        WHERE invoice_id = $1
+        ORDER BY id`,
+      [id]
+    );
+
+    const payload = buildPayload(invQ.rows[0], linesQ.rows, { enrichTo: enrich });
+
+    // Solo ver payload
+    if (debug) return res.json({ payload });
+
+    const apiKey = process.env.INVOICEGEN_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'Missing INVOICEGEN_API_KEY env' });
+
+    const r = await fetch('https://invoice-generator.com', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/pdf',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (probe) {
+      const text = await r.text();
+      return res.json({ ok: r.ok, provider_status: r.status, provider_body: text });
+    }
+
+    if (!r.ok) {
+      const text = await r.text();
+      console.error('invoice-generator.com response not OK:', r.status, text);
+      return res
+        .status(502)
+        .json({ error: 'upstream_error', provider_status: r.status, provider_body: text });
+    }
+
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="Invoice-${invQ.rows[0].invoice_no || id}.pdf"`
+    );
+    return res.send(buf);
+  } catch (e) {
+    console.error('GET /invoices/:id/pdf ERROR:', e);
+    return res.status(500).json({ error: 'Internal error generating PDF' });
+  }
+});
+
+module.exports = router;

@@ -1,0 +1,319 @@
+// ~/crm_app/backend/routes/invoices.js
+const express = require('express');
+const router = express.Router();
+const db = require('../db'); // expone db.query(...)
+
+// ------------------------ Helpers ------------------------
+const num = (v, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+};
+const safe = (v) => (v == null ? '' : String(v).trim());
+const joinLines = (arr) => arr.filter(Boolean).join('\n');
+
+// Totales con montos ABSOLUTOS (descuento y tax como números, no %)
+function computeTotals(lines, discount = 0, tax = 0) {
+  const subtotal = lines.reduce(
+    (acc, l) => acc + num(l.quantity, 0) * num(l.unit_price, 0),
+    0
+  );
+  const total = subtotal - num(discount, 0) + num(tax, 0);
+  return { subtotal, discount: num(discount, 0), tax: num(tax, 0), total };
+}
+
+// Siguiente invoice_no: secuencia si existe, si no MAX()+1, default 1001
+async function nextInvoiceNo(client) {
+  try {
+    const r = await client.query(`SELECT nextval('invoice_no_seq') AS n`);
+    const n = r.rows[0]?.n;
+    if (n) return String(n);
+  } catch (_) {
+    // sin secuencia, sigue
+  }
+  const r2 = await client.query(
+    `SELECT COALESCE(MAX(COALESCE(NULLIF(invoice_no,''),'0')::int),1000)+1 AS n FROM invoices`
+  );
+  return String(r2.rows[0]?.n || 1001);
+}
+
+// ------------------------ Health ------------------------
+router.get('/health', (_req, res) => res.json({ ok: true }));
+
+// ------------------------ GET detalle ------------------------
+router.get('/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const iRes = await db.query(
+      `SELECT id, invoice_no, client_id, currency, subtotal, discount, tax, total, status, created_at
+       FROM invoices WHERE id = $1`,
+      [id]
+    );
+    if (!iRes.rows.length) return res.status(404).json({ error: 'Not found' });
+    const inv = iRes.rows[0];
+
+    const lRes = await db.query(
+      `SELECT id, invoice_id, service_id, description, quantity, unit_price, line_total
+       FROM invoice_lines WHERE invoice_id = $1 ORDER BY id`,
+      [id]
+    );
+    inv.lines = lRes.rows || [];
+    res.json(inv);
+  } catch (err) {
+    console.error('GET /invoices/:id ERROR:', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// ------------------------ DRAFT (preview) ------------------------
+router.post('/draft', async (req, res) => {
+  try {
+    const { client_id, currency = 'USD', discount = 0, tax = 0 } = req.body || {};
+    const raw = Array.isArray(req.body?.items) ? req.body.items : [];
+
+    const lines = raw.map((it) => ({
+      description: safe(it.description || it.service_name || 'Service'),
+      quantity: num(it.quantity != null ? it.quantity : it.qty, 1),
+      unit_price: num(it.unit_price != null ? it.unit_price : it.price, 0),
+    }));
+
+    const totals = computeTotals(lines, discount, tax);
+    res.json({
+      invoice_no: '(preview)',
+      client_id: client_id ? Number(client_id) : null,
+      currency,
+      lines: lines.map((l) => ({
+        description: l.description,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        line_total: num(l.quantity) * num(l.unit_price),
+      })),
+      ...totals,
+    });
+  } catch (err) {
+    console.error('POST /invoices/draft ERROR:', err);
+    res.status(500).json({ error: 'Internal error creating draft' });
+  }
+});
+
+// ------------------------ CREATE (desde service_ids o items) ------------------------
+router.post('/create', async (req, res) => {
+  const client = db;
+  const {
+    client_id,
+    service_ids = [],
+    items = [],
+    currency = 'USD',
+    discount = 0,
+    tax = 0,
+  } = req.body || {};
+
+  if (!client_id) return res.status(400).json({ error: 'client_id is required' });
+
+  try {
+    let lines = [];
+    if (Array.isArray(service_ids) && service_ids.length) {
+      const ids = service_ids.map(Number).filter(Number.isFinite);
+      if (!ids.length) return res.status(400).json({ error: 'service_ids invalid' });
+
+      const sRes = await client.query(
+        `SELECT id, client_id, COALESCE(NULLIF(service_name,''), description) AS description,
+                quantity, unit_price
+         FROM services
+         WHERE id = ANY($1::int[])`,
+        [ids]
+      );
+      if (!sRes.rows.length) return res.status(400).json({ error: 'services not found' });
+
+      const wrong = sRes.rows.find((s) => Number(s.client_id) !== Number(client_id));
+      if (wrong) {
+        return res.status(400).json({ error: `service ${wrong.id} not owned by client ${client_id}` });
+      }
+
+      lines = sRes.rows.map((s) => ({
+        service_id: s.id,
+        description: safe(s.description || 'Service'),
+        quantity: num(s.quantity, 1),
+        unit_price: num(s.unit_price, 0),
+      }));
+    } else if (Array.isArray(items) && items.length) {
+      lines = items.map((it) => ({
+        service_id: null,
+        description: safe(it.description || it.service_name || 'Service'),
+        quantity: num(it.quantity != null ? it.quantity : it.qty, 1),
+        unit_price: num(it.unit_price != null ? it.unit_price : it.price, 0),
+      }));
+    } else {
+      return res.status(400).json({ error: 'Provide service_ids[] or items[]' });
+    }
+
+    const totals = computeTotals(lines, discount, tax);
+    const invNo = await nextInvoiceNo(client);
+
+    const iRes = await client.query(
+      `INSERT INTO invoices (invoice_no, client_id, currency, subtotal, discount, tax, total, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'issued')
+       RETURNING id, invoice_no, client_id, currency, subtotal, discount, tax, total, status, created_at`,
+      [invNo, Number(client_id), currency, totals.subtotal, totals.discount, totals.tax, totals.total]
+    );
+    const inv = iRes.rows[0];
+
+    const values = [];
+    const params = [];
+    let p = 1;
+    for (const l of lines) {
+      values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+      params.push(
+        inv.id,
+        l.service_id, // puede ser null
+        l.description,
+        l.quantity,
+        l.unit_price,
+        num(l.quantity) * num(l.unit_price)
+      );
+    }
+    const lRes = await client.query(
+      `INSERT INTO invoice_lines (invoice_id, service_id, description, quantity, unit_price, line_total)
+       VALUES ${values.join(',')}
+       RETURNING id, invoice_id, service_id, description, quantity, unit_price, line_total`,
+      params
+    );
+
+    inv.lines = lRes.rows;
+    res.status(201).json(inv);
+  } catch (err) {
+    console.error('POST /invoices/create ERROR:', err);
+    res.status(500).json({ error: 'Internal error creating invoice' });
+  }
+});
+
+// ------------------------ PDF ------------------------
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    // Factura + Cliente
+    const invRes = await db.query(
+      `SELECT i.id, i.invoice_no, i.client_id, i.currency, i.subtotal, i.discount, i.tax, i.total, i.status, i.created_at,
+              c.first_name, c.last_name, c.email, c.phone,
+              c.address, c.address2, c.city, c.state, c.zip
+       FROM invoices i
+       LEFT JOIN clients c ON c.id = i.client_id
+       WHERE i.id = $1`,
+      [id]
+    );
+    if (!invRes.rows.length) return res.status(404).json({ error: 'Not found' });
+    const inv = invRes.rows[0];
+
+    // Líneas
+    const linesRes = await db.query(
+      `SELECT description, quantity, unit_price
+       FROM invoice_lines
+       WHERE invoice_id = $1
+       ORDER BY id`,
+      [id]
+    );
+
+    // 'to' (enriquecido opcionalmente)
+    const clientName = [safe(inv.first_name), safe(inv.last_name)].filter(Boolean).join(' ').trim();
+    const toCompact = clientName || safe(inv.email) || 'Client';
+
+    const addressBlock = joinLines([
+      safe(inv.address),
+      safe(inv.address2),
+      [safe(inv.city), safe(inv.state), safe(inv.zip)].filter(Boolean).join(', ').replace(/^, /, ''),
+    ].filter(Boolean));
+
+    const toEnriched = joinLines(
+      [clientName || undefined, safe(inv.email), safe(inv.phone), addressBlock].filter(Boolean)
+    );
+
+    const to = req.query.enrich_to ? (toEnriched || toCompact) : toCompact;
+
+    // Items para proveedor
+    const itemsArr = (linesRes.rows.length ? linesRes.rows : [{ description: 'Service', quantity: 1, unit_price: 0 }])
+      .map((l) => ({
+        name: safe(l.description || 'Service'),
+        quantity: num(l.quantity, 1),
+        unit_cost: num(l.unit_price, 0),
+      }));
+
+    // Payload para invoice-generator.com
+    const payload = {
+      from: joinLines(['Total Repair Now', 'CRM']),
+      to,
+      number: String(inv.invoice_no || id),
+      logo: 'https://crm.totalrepairnow.com/v2/logo.png',
+      currency: inv.currency || 'USD',
+      // OJO: el proveedor espera "discounts" (no "discount")
+      discounts: num(inv.discount, 0),
+      tax: num(inv.tax, 0), // montos absolutos
+      items: itemsArr,
+      // Etiquetas opcionales
+      fields: { discounts: 'Discount', tax: 'Tax' }
+    };
+
+    // Debug: devuelve el payload sin llamar al proveedor
+    if (req.query.debug) {
+      return res.json({ invoice_id: inv.id, payload });
+    }
+
+    const IG_KEY = process.env.INVOICEGEN_API_KEY || '';
+    if (!IG_KEY) {
+      console.error('PDF ERROR: Missing INVOICEGEN_API_KEY');
+      return res.status(500).json({ error: 'Internal error generating PDF' });
+    }
+
+    // Si piden ver respuesta cruda del upstream (diagnóstico), no entregamos PDF
+    if (req.query.upstream || req.query.probe) {
+      const igRes = await fetch('https://invoice-generator.com', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${IG_KEY}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/pdf',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const text = await igRes.text().catch(() => '');
+      if (!igRes.ok) {
+        return res.status(502).json({
+          error: 'upstream_error',
+          provider_status: igRes.status,
+          provider_body: text
+        });
+      }
+      // si estuvo OK, devolvemos metadatos
+      return res.json({ ok: true, provider_status: igRes.status, content_type: igRes.headers.get('content-type') });
+    }
+
+    // Llamada normal para PDF
+    const igRes = await fetch('https://invoice-generator.com', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${IG_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/pdf',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const ct = (igRes.headers.get('content-type') || '').toLowerCase();
+    if (!igRes.ok || !ct.includes('application/pdf')) {
+      const txt = await igRes.text().catch(() => '');
+      console.error('invoice-generator.com NOT OK:', igRes.status, txt);
+      return res.status(500).json({ error: 'Internal error generating PDF' });
+    }
+
+    const buf = Buffer.from(await igRes.arrayBuffer());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Invoice-${inv.invoice_no || id}_.pdf"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('GET /invoices/:id/pdf ERROR:', err);
+    res.status(500).json({ error: 'Internal error generating PDF' });
+  }
+});
+
+module.exports = router;

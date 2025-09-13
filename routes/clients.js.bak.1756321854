@@ -1,0 +1,187 @@
+const express = require('express');
+const router = express.Router();                 // 👈 declarar antes de usar
+const { pool } = require('../db');
+const { requireAuth } = require('../middleware/auth');
+
+// Normaliza columnas: soporta empresa/telefono/estado y alias EN
+function mapClientRow(r) {
+  const empresa  = r.empresa ?? r.company_name ?? 'Sin nombre';
+  const telefono = r.telefono ?? r.phone ?? null;
+  const estado   = r.estado   ?? r.status ?? 'activo';
+  return {
+    id: r.id?.toString?.() ?? r.id,
+    cliente_id: r.cliente_id,   // uuid estable
+    empresa,
+    email: r.email,
+    telefono,
+    estado,
+    last_contact_at: r.last_contact_at,
+    created_at: r.created_at,
+    updated_at: r.updated_at
+  };
+}
+
+// GET /api/clients?page=&pageSize=&q=&status=
+router.get('/', requireAuth, async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || '10', 10), 1), 100);
+    const q = (req.query.q || '').trim();
+    const status = (req.query.status || '').trim();
+
+    const params = [];
+    const where = [];
+
+    if (q) {
+      params.push(`%${q.toLowerCase()}%`);
+      where.push('(LOWER(empresa) LIKE $' + params.length + ' OR LOWER(email) LIKE $' + params.length + ')');
+    }
+    if (status) {
+      params.push(status.toLowerCase());
+      where.push('LOWER(estado) = $' + params.length);
+    }
+
+    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const offset = (page - 1) * pageSize;
+
+    const totalSql = `SELECT COUNT(*)::int AS total FROM clients ${whereSQL}`;
+    const listSql = `
+      SELECT id, cliente_id, empresa, email, telefono, estado, last_contact_at, created_at, updated_at,
+             company_name, phone, status
+      FROM clients
+      ${whereSQL}
+      ORDER BY updated_at DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+
+    const totalRes = await pool.query(totalSql, params);
+    const total = totalRes.rows[0]?.total || 0;
+
+    const listParams = params.slice();
+    listParams.push(pageSize, offset);
+
+    const listRes = await pool.query(listSql, listParams);
+    const items = listRes.rows.map(mapClientRow);
+
+    res.json({ page, pageSize, total, items });
+  } catch (e) {
+    console.error('clients list error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// GET /api/clients/:id
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    let row;
+    if (/^\d+$/.test(id)) {
+      const r = await pool.query(`
+        SELECT id, cliente_id, empresa, email, telefono, estado, last_contact_at,
+               created_at, updated_at, company_name, phone, status
+        FROM clients WHERE id = $1
+      `, [id]);
+      row = r.rows[0];
+    } else {
+      const r = await pool.query(`
+        SELECT id, cliente_id, empresa, email, telefono, estado, last_contact_at,
+               created_at, updated_at, company_name, phone, status
+        FROM clients WHERE cliente_id = $1
+      `, [id]);
+      row = r.rows[0];
+    }
+    if (!row) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json(mapClientRow(row));
+  } catch (e) {
+    console.error('clients get error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// POST /api/clients
+router.post('/', requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const empresa  = b.empresa ?? b.company_name;
+    const email    = b.email ?? null;
+    const telefono = b.telefono ?? b.phone ?? null;
+    const estado   = b.estado ?? b.status ?? 'activo';
+    const last_contact_at = b.last_contact_at ?? null;
+
+    if (!empresa || typeof empresa !== 'string') {
+      return res.status(400).json({ error: 'empresa es obligatoria' });
+    }
+
+    const sql = `
+      INSERT INTO clients (empresa, email, telefono, estado, last_contact_at)
+      VALUES ($1,$2,$3,$4,$5)
+      RETURNING id, cliente_id, empresa, email, telefono, estado, last_contact_at, created_at, updated_at,
+                company_name, phone, status
+    `;
+    const vals = [empresa, email, telefono, estado, last_contact_at];
+    const r = await pool.query(sql, vals);
+    res.status(201).json(mapClientRow(r.rows[0]));
+  } catch (e) {
+    console.error('clients create error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// PUT /api/clients/:id
+router.put('/:id', requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const b = req.body || {};
+    const empresa  = b.empresa ?? b.company_name ?? null;
+    const email    = b.email ?? null;
+    const telefono = b.telefono ?? b.phone ?? null;
+    const estado   = b.estado ?? b.status ?? null;
+    const last_contact_at = b.last_contact_at ?? null;
+
+    const fields = [];
+    const vals = [];
+    const push = (frag, val) => { fields.push(frag.replace('?', `$${vals.length+1}`)); vals.push(val); };
+
+    if (empresa  !== null) push('empresa = ?', empresa);
+    if (email    !== null) push('email = ?', email);
+    if (telefono !== null) push('telefono = ?', telefono);
+    if (estado   !== null) push('estado = ?', estado);
+    if (last_contact_at !== null) push('last_contact_at = ?', last_contact_at);
+
+    if (!fields.length) return res.status(400).json({ error: 'Nada para actualizar' });
+
+    let where = '';
+    if (/^\d+$/.test(id)) { where = `id = $${vals.length+1}`; vals.push(parseInt(id,10)); }
+    else { where = `cliente_id = $${vals.length+1}`; vals.push(id); }
+
+    const sql = `
+      UPDATE clients SET ${fields.join(', ')}, updated_at = NOW()
+      WHERE ${where}
+      RETURNING id, cliente_id, empresa, email, telefono, estado, last_contact_at, created_at, updated_at,
+                company_name, phone, status
+    `;
+    const r = await pool.query(sql, vals);
+    if (!r.rowCount) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json(mapClientRow(r.rows[0]));
+  } catch (e) {
+    console.error('clients update error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// DELETE /api/clients/:id  (opcional)
+router.delete('/:id', requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    let r;
+    if (/^\d+$/.test(id)) r = await pool.query('DELETE FROM clients WHERE id = $1', [id]);
+    else                 r = await pool.query('DELETE FROM clients WHERE cliente_id = $1', [id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json({ status: 'ok' });
+  } catch (e) {
+    console.error('clients delete error:', e);
+    res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+module.exports = router;

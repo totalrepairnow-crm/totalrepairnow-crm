@@ -1,0 +1,169 @@
+// /home/crmadmin/crm_app/backend/routes/invoices.js
+const express = require('express');
+const router = express.Router();
+const db = require('../db');
+
+// Helpers
+function num(n) {
+  if (n == null) return 0;
+  const x = Number(n);
+  return Number.isFinite(x) ? x : 0;
+}
+
+function safeTrunc(s, max = 2000) {
+  if (typeof s !== 'string') return s;
+  return s.length > max ? s.slice(0, max) + '…(truncated)' : s;
+}
+
+// --- HEALTH ---
+router.get('/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
+// --- DETALLE FACTURA ---
+router.get('/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    const invQ = `
+      SELECT i.id, i.invoice_no, i.client_id, i.currency,
+             i.subtotal, i.discount, i.tax, i.total, i.status, i.created_at
+      FROM invoices i
+      WHERE i.id = $1
+      LIMIT 1
+    `;
+    const inv = (await db.query(invQ, [id])).rows[0];
+    if (!inv) return res.status(404).json({ error: 'Not found' });
+
+    const linesQ = `
+      SELECT id, invoice_id, service_id, description, quantity, unit_price, line_total
+      FROM invoice_lines
+      WHERE invoice_id = $1
+      ORDER BY id
+    `;
+    const lines = (await db.query(linesQ, [id])).rows;
+
+    res.json({ ...inv, lines });
+  } catch (err) {
+    console.error('GET /invoices/:id ERROR:', err);
+    res.status(500).json({ error: 'Internal error fetching invoice' });
+  }
+});
+
+// --- PDF (payload + upstream + pdf) ---
+router.get('/:id/pdf', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+  try {
+    // 1) Carga factura + líneas
+    const invQ = `
+      SELECT i.id, i.invoice_no, i.client_id, i.currency,
+             i.subtotal, i.discount, i.tax, i.total, i.status, i.created_at
+      FROM invoices i
+      WHERE i.id = $1
+      LIMIT 1
+    `;
+    const inv = (await db.query(invQ, [id])).rows[0];
+    if (!inv) return res.status(404).json({ error: 'Not found' });
+
+    const linesQ = `
+      SELECT id, invoice_id, service_id, description, quantity, unit_price, line_total
+      FROM invoice_lines
+      WHERE invoice_id = $1
+      ORDER BY id
+    `;
+    const lines = (await db.query(linesQ, [id])).rows;
+
+    // 2) Carga cliente (usa nombre y email; no asumimos "address" en DB)
+    const cliQ = `
+      SELECT id, name, email
+      FROM clients
+      WHERE id = $1
+      LIMIT 1
+    `;
+    const client = (await db.query(cliQ, [inv.client_id])).rows[0] || {};
+    const toField = [client.name, client.email].filter(Boolean).join('\n') || 'Client';
+
+    // 3) Construye payload para invoice-generator.com
+    const payload = {
+      from: 'Total Repair Now\nCRM',
+      to: toField,
+      number: String(inv.invoice_no || id),
+      currency: inv.currency || 'USD',
+      discount: num(inv.discount),
+      tax: num(inv.tax),
+      items: lines.map(l => ({
+        name: l.description || 'Item',
+        quantity: num(l.quantity),
+        unit_cost: num(l.unit_price)
+      }))
+    };
+
+    // Modo debug: solo ver el payload
+    if (req.query.debug === '1') {
+      return res.json({ payload });
+    }
+
+    // 4) Llama al proveedor
+    const apiKey = process.env.INVOICEGEN_API_KEY;
+    if (!apiKey) {
+      console.error('INVOICEGEN_API_KEY is NOT set (env)');
+      return res.status(500).json({ error: 'PDF service API key missing' });
+    }
+
+    // "probe=1" → llama al proveedor y devuelve su status/texto para diagnóstico
+    const doProbe = req.query.probe === '1';
+
+    const upstreamResp = await fetch('https://invoice-generator.com', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': doProbe ? 'application/json' : 'application/pdf',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!upstreamResp.ok) {
+      const bodyTxt = await upstreamResp.text().catch(() => '');
+      console.error('invoice-generator.com not OK:',
+        upstreamResp.status, safeTrunc(bodyTxt));
+      if (doProbe) {
+        return res.status(502).json({
+          error: 'upstream_error',
+          provider_status: upstreamResp.status,
+          provider_body: safeTrunc(bodyTxt, 4000)
+        });
+      }
+      return res.status(502).json({ error: 'Bad gateway calling PDF service' });
+    }
+
+    if (doProbe) {
+      const ct = upstreamResp.headers.get('content-type');
+      const cl = upstreamResp.headers.get('content-length');
+      return res.json({
+        ok: true,
+        provider_status: upstreamResp.status,
+        content_type: ct,
+        content_length: cl
+      });
+    }
+
+    // 5) Entrega el PDF
+    const ab = await upstreamResp.arrayBuffer();
+    const buf = Buffer.from(ab);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="Invoice-${String(inv.invoice_no || id)}_.pdf"`
+    );
+    return res.status(200).send(buf);
+  } catch (err) {
+    console.error('GET /invoices/:id/pdf ERROR:', err);
+    res.status(500).json({ error: 'Internal error generating PDF' });
+  }
+});
+
+module.exports = router;

@@ -1,0 +1,88 @@
+const express = require('express');
+const router = express.Router();
+const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const {
+  PGHOST='127.0.0.1',
+  PGPORT='5432',
+  PGDATABASE='crm',
+  PGUSER='crmuser',
+  PGPASSWORD='changeme',
+  JWT_SECRET='supersecret',
+  JWT_EXPIRES_IN='12h'
+} = process.env;
+
+const pool = new Pool({
+  host: PGHOST,
+  port: Number(PGPORT),
+  database: PGDATABASE,
+  user: PGUSER,
+  password: PGPASSWORD,
+  ssl: false
+});
+
+// POST /api/auth/login
+router.post('/login', async (req, res) => {
+  try {
+    // Asegurar body
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ error: 'Cuerpo inválido' });
+    }
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email y password requeridos' });
+    }
+
+    // Buscar usuario por email (case-insensitive)
+    const q = `
+      SELECT id::text, username, email, role, password_hash
+      FROM users
+      WHERE LOWER(email) = LOWER($1)
+      LIMIT 1
+    `;
+    const { rows } = await pool.query(q, [email]);
+    const user = rows[0];
+
+    if (!user) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+
+    const ok = bcrypt.compareSync(password, user.password_hash);
+    if (!ok) {
+      return res.status(401).json({ error: 'Credenciales inválidas' });
+    }
+
+    const token = jwt.sign(
+      { sub: user.id, role: user.role, email: user.email },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES_IN }
+    );
+
+    return res.json({
+      token,
+      user: { id: user.id, username: user.username, email: user.email, role: user.role }
+    });
+  } catch (err) {
+    console.error('login error', err);
+    return res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+// GET /api/auth/me (opcional, para probar token)
+router.get('/me', (req, res) => {
+  try {
+    const hdr = req.headers['authorization'] || '';
+    const m = hdr.match(/^Bearer\s+(.+)$/i);
+    if (!m) return res.status(401).json({ error: 'Sin token' });
+
+    const payload = jwt.verify(m[1], process.env.JWT_SECRET || 'supersecret');
+    return res.json({ ok: true, payload });
+  } catch (e) {
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+});
+
+module.exports = router;

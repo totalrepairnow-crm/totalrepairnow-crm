@@ -1,0 +1,178 @@
+'use strict';
+
+const express = require('express');
+const router = express.Router();
+const db = require('../db');
+
+// ---------------- helpers ----------------
+const toNum = (v, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+};
+const toStr = (v) => (v ?? '').toString().trim();
+
+function normItem(raw = {}) {
+  const description =
+    toStr(raw.description) ||
+    toStr(raw.service_name) ||
+    toStr(raw.name);
+  if (!description) return { ok: false, msg: 'item description/service_name is required' };
+
+  const quantity   = toNum(raw.quantity ?? raw.qty, 1);
+  const unit_price = toNum(raw.unit_price ?? raw.price ?? raw.unit_cost, 0);
+  const service_id = raw.service_id ? Number(raw.service_id) : null;
+
+  return { ok: true, description, quantity, unit_price, service_id };
+}
+
+async function getNextInvoiceNo(client) {
+  // Asegúrate que la secuencia existe: CREATE SEQUENCE IF NOT EXISTS invoice_seq START 1000;
+  const r = await client.query(`SELECT nextval('invoice_seq') AS n`);
+  return String(r.rows[0].n); // "1000", "1001", ...
+}
+
+// Health simple
+router.get('/health', (_req, res) => res.json({ ok: true }));
+
+// ---------------- DRAFT (no escribe en DB) ----------------
+// Nota: No consumimos la secuencia aquí para evitar 500 y gaps; sólo calculamos totales.
+router.post('/draft', async (req, res) => {
+  try {
+    const { client_id, currency = 'USD', discount = 0, tax = 0, items = [] } = req.body || {};
+    const clientId = Number(client_id);
+    if (!clientId) return res.status(400).json({ error: 'client_id is required' });
+
+    const lines = [];
+    for (const raw of (Array.isArray(items) ? items : [])) {
+      const n = normItem(raw);
+      if (!n.ok) return res.status(400).json({ error: n.msg });
+      lines.push({
+        description: n.description,
+        quantity: n.quantity,
+        unit_price: n.unit_price,
+        line_total: n.quantity * n.unit_price
+      });
+    }
+
+    const subtotal  = lines.reduce((a, l) => a + l.line_total, 0);
+    const _discount = toNum(discount);
+    const _tax      = toNum(tax);
+    const total     = subtotal - _discount + _tax;
+
+    // No usamos secuencia aquí (sólo preview)
+    return res.json({
+      invoice_no: '(preview)',
+      client_id: clientId,
+      currency,
+      lines,
+      subtotal,
+      discount: _discount,
+      tax: _tax,
+      total
+    });
+  } catch (err) {
+    console.error('POST /invoices/draft ERROR:', err.stack || err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// ---------------- CREATE (inserta en DB) ----------------
+router.post('/create', async (req, res) => {
+  let client;
+  try {
+    const { client_id, currency = 'USD', discount = 0, tax = 0, items = [], service_ids = [] } = req.body || {};
+    const clientId = Number(client_id);
+    if (!clientId) return res.status(400).json({ error: 'client_id is required' });
+
+    client = await db.connect();
+
+    // 1) Construir líneas desde service_ids (WOs del cliente)
+    const lines = [];
+    if (Array.isArray(service_ids) && service_ids.length) {
+      const ids = service_ids.map(Number).filter(Boolean);
+      if (!ids.length) return res.status(400).json({ error: 'service_ids invalid' });
+
+      const q = `
+        SELECT id, service_name, description, quantity, unit_price
+        FROM services
+        WHERE id = ANY($1::int[]) AND client_id = $2
+      `;
+      const r = await client.query(q, [ids, clientId]);
+      if (!r.rows.length) return res.status(400).json({ error: 'No matching services for client' });
+
+      for (const s of r.rows) {
+        lines.push({
+          service_id: s.id,
+          description: s.description || s.service_name || `WO #${s.id}`,
+          quantity: Number(s.quantity) || 1,
+          unit_price: Number(s.unit_price) || 0,
+        });
+      }
+    }
+
+    // 2) Items ad-hoc
+    if (Array.isArray(items) && items.length) {
+      for (const raw of items) {
+        const n = normItem(raw);
+        if (!n.ok) return res.status(400).json({ error: n.msg });
+        lines.push({
+          service_id: n.service_id,
+          description: n.description,
+          quantity: n.quantity,
+          unit_price: n.unit_price,
+        });
+      }
+    }
+
+    if (!lines.length) return res.status(400).json({ error: 'No items or service_ids provided' });
+
+    // 3) Totales
+    const subtotal  = lines.reduce((a, l) => a + (l.quantity * l.unit_price), 0);
+    const _discount = toNum(discount);
+    const _tax      = toNum(tax);
+    const total     = subtotal - _discount + _tax;
+
+    await client.query('BEGIN');
+
+    // 4) Número de factura real desde secuencia
+    const invoice_no = await getNextInvoiceNo(client);
+
+    // 5) Inserta invoice
+    const invSQL = `
+      INSERT INTO invoices (invoice_no, client_id, currency, subtotal, discount, tax, total, status, provider)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'issued','invoice-generator')
+      RETURNING id, invoice_no, client_id, currency, subtotal, discount, tax, total, status, created_at
+    `;
+    const invRes = await client.query(invSQL, [invoice_no, clientId, currency, subtotal, _discount, _tax, total]);
+    const invoice = invRes.rows[0];
+
+    // 6) Inserta líneas (line_total lo calcula la DB)
+    const cols = ['invoice_id','service_id','description','quantity','unit_price'];
+    const params = [];
+    const values = [];
+    let p = 1;
+
+    for (const l of lines) {
+      values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+      params.push(invoice.id, (l.service_id ?? null), l.description, l.quantity, l.unit_price);
+    }
+
+    const lineSQL = `
+      INSERT INTO invoice_lines (${cols.join(',')})
+      VALUES ${values.join(',')}
+      RETURNING id, invoice_id, service_id, description, quantity, unit_price, line_total
+    `;
+    const lineRes = await client.query(lineSQL, params);
+
+    await client.query('COMMIT');
+    return res.status(201).json({ ...invoice, lines: lineRes.rows });
+  } catch (err) {
+    try { if (client) await client.query('ROLLBACK'); } catch {}
+    console.error('POST /invoices/create ERROR:', err.detail || err.message || err);
+    return res.status(500).json({ error: 'Internal error creating invoice' });
+  } finally {
+    try { if (client) client.release(); } catch {}
+  }
+});
+
+module.exports = router;

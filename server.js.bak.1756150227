@@ -1,0 +1,37 @@
+require('dotenv').config();
+const express = require('express');
+const app = express();
+
+// Middlewares
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Rutas de negocio
+const clientsRoutes  = require('./routes/clients');
+app.use('/api/clients', clientsRoutes);
+
+// Auth (solo una vez)
+const authRoutes = require('./routes/auth');
+const servicesRoutes = require('./routes/services');
+app.use('/api/auth', authRoutes);
+
+// Services
+const servicesRoutes = require('./routes/services');
+app.use('/api', servicesRoutes);
+
+// (Opcional) Métricas si existe el archivo
+try {
+  const metricsRoutes = require('./routes/metrics');
+  app.use('/api/metrics', metricsRoutes);
+} catch (_e) { /* ignore if not present */ }
+
+// Debug: echo útil para comprobar cuerpo/headers
+app.post('/api/_debug_echo', (req, res) => {
+  res.json({ headers: req.headers, body: req.body });
+});
+
+// Health
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`CRM backend running on port ${PORT}`));

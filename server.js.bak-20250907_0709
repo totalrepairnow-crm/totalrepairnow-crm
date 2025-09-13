@@ -1,0 +1,68 @@
+// server.js — CRM Backend
+require('dotenv').config();
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const db = require('./db');
+
+const app = express();
+app.use(express.json());
+
+// Health
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+// Login: devuelve token y accessToken (mismo valor)
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: 'Missing credentials' });
+
+    const q = 'SELECT id, email, password_hash, role FROM users WHERE email=$1 LIMIT 1';
+    const { rows } = await db.query(q, [email]);
+    const user = rows[0];
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+    const token = jwt.sign(
+      { sub: user.id, email: user.email, role: user.role || 'admin' },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    res.json({ token, accessToken: token });
+  } catch (err) {
+    console.error('LOGIN /api/login ERROR:', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Montar routers si existen
+function mountIfExists(prefix, file) {
+  try {
+    const r = require(file);
+    app.use(prefix, r);
+    console.log(`Mounted ${prefix} -> ${file}`);
+  } catch (_e) {}
+}
+mountIfExists('/api/clients',   './routes/clients');
+mountIfExists('/api/clients',   './routes/services');
+mountIfExists('/api/users',     './routes/users');
+mountIfExists('/api',           './routes/uploads');
+mountIfExists('/api/metrics',   './routes/metrics');
+mountIfExists('/api/dashboard', './routes/dashboard'); // << importante
+
+// 404 API
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
+
+// Error handler
+app.use((err, _req, res, _next) => {
+  console.error('UNCAUGHT ERROR:', err);
+  res.status(500).json({ error: 'Internal error' });
+});
+
+// Start
+const PORT = Number(process.env.PORT || 3001);
+app.listen(PORT, () => console.log(`CRM backend running on port ${PORT}`));
+

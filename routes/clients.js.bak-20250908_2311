@@ -1,0 +1,208 @@
+/**
+ * ~/crm_app/backend/routes/clients.js
+ * Listado con búsqueda (q), paginación (page/limit) y ORDENAMIENTO (sort/dir).
+ * sort: id|first_name|last_name|email|phone|created_at
+ * dir: asc|desc
+ */
+const express = require('express');
+const router = express.Router();
+const db = require('../db');
+
+// --- util: parse número con mínimos y máximos
+function parsePositiveInt(v, def, min, max) {
+  const n = Number.parseInt(v, 10);
+  if (!Number.isFinite(n) || n < (min ?? 1)) return def;
+  if (max && n > max) return max;
+  return n;
+}
+
+// --- GET /api/clients
+router.get('/', async (req, res) => {
+  try {
+    const rawQ = (req.query.q || '').trim();
+    const page  = parsePositiveInt(req.query.page, 1, 1, 1000000);
+    const limit = parsePositiveInt(req.query.limit, 10, 1, 100);
+
+    // Ordenamiento seguro (whitelist)
+    const ALLOWED = new Set(['id','first_name','last_name','email','phone','created_at']);
+    const sortParam = String(req.query.sort || 'created_at').toLowerCase();
+    const sortCol = ALLOWED.has(sortParam) ? sortParam : 'created_at';
+    const dirParam = String(req.query.dir || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+
+    // Búsqueda
+    const params = [];
+    const whereParts = [];
+    if (rawQ) {
+      params.push(`%${rawQ}%`);
+      whereParts.push(
+        `(
+          (COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) ILIKE $${params.length}
+          OR email ILIKE $${params.length}
+          OR phone ILIKE $${params.length}
+        )`
+      );
+    }
+    const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    // Conteo total
+    const { rows: countRows } = await db.query(
+      `SELECT COUNT(*)::int AS total FROM clients ${where}`,
+      params
+    );
+    const total = countRows[0]?.total ?? 0;
+
+    // Página y offset
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const p = Math.min(page, totalPages);
+    const offset = (p - 1) * limit;
+
+    // LIMIT/OFFSET índices paramétricos
+    const limitIdx  = params.length + 1;
+    const offsetIdx = params.length + 2;
+
+    // ORDER BY (columna/sentido validados arriba)
+    const orderClause = `ORDER BY ${sortCol} ${dirParam}, id DESC`;
+
+    // Items
+    const { rows: items } = await db.query(
+      `
+        SELECT id, first_name, last_name, email, phone, created_at
+        FROM clients
+        ${where}
+        ${orderClause}
+        LIMIT $${limitIdx} OFFSET $${offsetIdx}
+      `,
+      [...params, limit, offset]
+    );
+
+    return res.json({
+      items,
+      page: p,
+      limit,
+      total,
+      totalPages,
+      hasPrev: p > 1,
+      hasNext: p < totalPages,
+      q: rawQ,
+      sort: sortCol,
+      dir: dirParam,
+    });
+  } catch (e) {
+    console.error('GET /api/clients failed:', e);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// --- GET /api/clients/:id
+router.get('/:id', async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Bad id' });
+
+    const { rows } = await db.query(
+      `SELECT id, first_name, last_name, email, phone, created_at
+       FROM clients
+       WHERE id = $1
+       LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    return res.json(rows[0]);
+  } catch (e) {
+    console.error('GET /api/clients/:id failed:', e);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// --- POST /api/clients
+router.post('/', async (req, res) => {
+  try {
+    const { first_name = null, last_name = null, email = null, phone = null } = req.body || {};
+    const { rows } = await db.query(
+      `
+        INSERT INTO clients (first_name, last_name, email, phone)
+        VALUES ($1,$2,$3,$4)
+        RETURNING id, first_name, last_name, email, phone, created_at
+      `,
+      [first_name, last_name, email, phone]
+    );
+    return res.json(rows[0]);
+  } catch (e) {
+    console.error('POST /api/clients failed:', e);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// --- Servicios por cliente: GET /api/clients/:id/services
+const { Router } = require('express');
+// Reutiliza la misma conexión
+const db2 = require('../db');
+
+function toInt(v, d = 0) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : d;
+}
+function cleanSortServices(sort) {
+  const allow = { id: 's.id', created_at: 's.created_at', total: 's.total' };
+  let dir = 'DESC';
+  let key = sort || '-created_at';
+  if (key.startsWith('-')) { key = key.slice(1); dir = 'DESC'; }
+  else if (key.startsWith('+')) { key = key.slice(1); dir = 'ASC'; }
+  else { dir = 'ASC'; }
+  const col = allow[key] || 's.created_at';
+  return `${col} ${dir}`;
+}
+
+router.get('/:id/services', async (req, res) => {
+  try {
+    const id = toInt(req.params.id, null);
+    if (!id) return res.status(400).json({ error: 'Invalid client id' });
+
+    const q = (req.query.q || '').trim();
+    const status = (req.query.status || '').trim();
+    const page = Math.max(1, toInt(req.query.page, 1));
+    const limit = Math.min(100, Math.max(1, toInt(req.query.limit, 10)));
+    const offset = (page - 1) * limit;
+    const orderBy = cleanSortServices(req.query.sort);
+
+    const where = [`s.client_id = $1`];
+    const params = [id];
+
+    if (q) {
+      params.push(`%${q}%`); const p1 = params.length;
+      params.push(`%${q}%`); const p2 = params.length;
+      where.push(`(s.service_name ILIKE $${p1} OR s.description ILIKE $${p2})`);
+    }
+    if (status && status !== 'all') {
+      params.push(status);
+      where.push(`s.status = $${params.length}`);
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const { rows: countRows } = await db2.query(
+      `SELECT COUNT(*)::int AS c FROM services s ${whereSql}`, params
+    );
+    const total = countRows[0]?.c || 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    const { rows: items } = await db2.query(
+      `SELECT s.* FROM services s ${whereSql}
+       ORDER BY ${orderBy}
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    res.json({
+      page, limit, total, totalPages,
+      hasPrev: page > 1,
+      hasNext: page < totalPages,
+      items
+    });
+  } catch (err) {
+    console.error('GET /clients/:id/services error:', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+
+module.exports = router;

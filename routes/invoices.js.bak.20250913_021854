@@ -1,0 +1,54 @@
+const express = require('express');
+const router = express.Router();
+const db = require('../db');
+
+// Health simple para verificar montaje
+router.get('/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
+// GET /api/invoices/:id  -> devuelve factura + cliente + líneas
+router.get('/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid id' });
+    }
+
+    const invQ = `
+      SELECT id, invoice_no, client_id, currency, subtotal, discount, tax, total, status, created_at
+      FROM invoices
+      WHERE id = $1
+    `;
+    const invRes = await db.query(invQ, [id]);
+    if (!invRes.rows.length) return res.status(404).json({ error: 'Not found' });
+    const inv = invRes.rows[0];
+
+    const cliQ = `
+      SELECT id, first_name, last_name, name, email, phone,
+             address_line1, address_line2, city, state, postal_code, country
+      FROM clients
+      WHERE id = $1
+    `;
+    const cliRes = await db.query(cliQ, [inv.client_id]);
+
+    const linesQ = `
+      SELECT id, invoice_id, service_id, description, quantity, unit_price, line_total
+      FROM invoice_lines
+      WHERE invoice_id = $1
+      ORDER BY id
+    `;
+    const linesRes = await db.query(linesQ, [id]);
+
+    res.json({
+      ...inv,
+      client: cliRes.rows[0] || null,
+      lines: linesRes.rows || [],
+    });
+  } catch (err) {
+    console.error('GET /invoices/:id ERROR:', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+module.exports = router;
