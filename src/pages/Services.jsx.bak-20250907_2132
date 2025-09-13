@@ -1,0 +1,79 @@
+// src/pages/Services.jsx
+import React, { useEffect, useState } from 'react';
+import { listServices } from '../lib/api';
+
+export default function Services(){
+  const [items, setItems] = useState([]);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function load(p = page, l = limit){
+    try{
+      setLoading(true); setErr('');
+      const data = await listServices({ page: p, limit: l });
+      setItems(data.items || []);
+      setPage(data.page || p);
+      setLimit(data.limit || l);
+      setTotalPages(data.totalPages || 1);
+    }catch(e){ setErr(e.message || 'Error'); }
+    finally{ setLoading(false); }
+  }
+
+  useEffect(()=>{ load(1, limit); /* first load */ },[]);
+
+  const prev = ()=> page>1 && load(page-1, limit);
+  const next = ()=> page<totalPages && load(page+1, limit);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <h1>Services</h1>
+        <div className="toolbar-actions">
+          <select className="input" value={limit}
+            onChange={e=>{ const l=Number(e.target.value)||10; setLimit(l); load(1,l); }}>
+            <option value="5">5 / page</option>
+            <option value="10">10 / page</option>
+            <option value="20">20 / page</option>
+          </select>
+        </div>
+      </div>
+
+      {err && <div className="badge badge-danger">{err}</div>}
+      {loading ? <div>Cargando…</div> : (
+        <div className="card">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Service</th><th>Client ID</th>
+                <th>Total</th><th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.length===0 && (
+                <tr><td colSpan="5" style={{textAlign:'center', color:'#94a3b8'}}>Sin resultados</td></tr>
+              )}
+              {items.map(s=>(
+                <tr key={s.id}>
+                  <td>{s.id}</td>
+                  <td>{s.service_name || s.description || '-'}</td>
+                  <td>{s.client_id ?? '-'}</td>
+                  <td>{s.total ?? s.total_amount ?? '-'}</td>
+                  <td>{(s.created_at||'').toString().slice(0,19).replace('T',' ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="pager">
+            <button className="btn" disabled={page<=1} onClick={prev}>◀ Prev</button>
+            <span>Página {page} / {totalPages}</span>
+            <button className="btn" disabled={page>=totalPages} onClick={next}>Next ▶</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

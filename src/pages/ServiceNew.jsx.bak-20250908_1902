@@ -1,0 +1,270 @@
+// src/pages/ServiceNew.jsx
+import React, { useMemo, useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { createService } from '../lib/api';
+
+const styles = {
+  page: { maxWidth: 760, margin: '0 auto', padding: '24px' },
+  card: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 12,
+    boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+    padding: 20,
+  },
+  headerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 16,
+  },
+  gridFull: {
+    gridColumn: '1 / -1',
+  },
+  label: {
+    display: 'block',
+    fontSize: 13,
+    color: '#475569',
+    marginBottom: 6,
+  },
+  input: {
+    width: '100%',
+    height: 40,
+    border: '1px solid #e5e7eb',
+    borderRadius: 8,
+    padding: '0 12px',
+    fontSize: 14,
+    outline: 'none',
+  },
+  textarea: {
+    width: '100%',
+    minHeight: 96,
+    border: '1px solid #e5e7eb',
+    borderRadius: 8,
+    padding: '10px 12px',
+    fontSize: 14,
+    outline: 'none',
+    resize: 'vertical',
+  },
+  actions: {
+    display: 'flex',
+    gap: 10,
+    justifyContent: 'flex-end',
+    marginTop: 18,
+  },
+  btn: {
+    height: 40,
+    padding: '0 14px',
+    borderRadius: 8,
+    border: '1px solid #e5e7eb',
+    background: '#fff',
+    cursor: 'pointer',
+    fontSize: 14,
+  },
+  btnPrimary: {
+    background: '#2563eb',
+    color: '#fff',
+    borderColor: '#2563eb',
+  },
+  hint: { fontSize: 12, color: '#94a3b8', marginTop: 6 },
+};
+
+export default function ServiceNew() {
+  const nav = useNavigate();
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const [form, setForm] = useState({
+    client_id: '',
+    service_name: '',
+    description: '',
+    quantity: 1,
+    unit_price: '',
+    status: 'open',
+  });
+
+  const total = useMemo(() => {
+    const q = Number(form.quantity) || 0;
+    const p = Number(form.unit_price) || 0;
+    return q * p;
+  }, [form.quantity, form.unit_price]);
+
+  const onChange = (key) => (e) => {
+    const value = e?.target?.value;
+    setForm((f) => ({ ...f, [key]: value }));
+  };
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    setErr('');
+    if (!form.client_id || !form.service_name) {
+      setErr('Client ID y Service Name son obligatorios.');
+      return;
+    }
+    try {
+      setSaving(true);
+      const payload = {
+        client_id: Number(form.client_id),
+        service_name: form.service_name.trim(),
+        description: form.description?.trim() || '',
+        quantity: Number(form.quantity) || 0,
+        unit_price: Number(form.unit_price) || 0,
+        status: form.status || 'open',
+      };
+      const created = await createService(payload);
+      // Si el backend devuelve el objeto con id, vamos al detalle; si no, a la lista.
+      if (created?.id) {
+        nav(`/services/${created.id}`);
+      } else {
+        nav('/services');
+      }
+    } catch (e2) {
+      setErr(e2.message || 'Error creating service');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.headerRow}>
+        <h1 style={{ margin: 0, fontSize: 22 }}>New Service</h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Link to="/services" className="btn" style={styles.btn}>← Back</Link>
+          <button
+            type="submit"
+            form="service-form"
+            className="btn primary"
+            style={{ ...styles.btn, ...styles.btnPrimary }}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+
+      {err && (
+        <div className="alert" style={{ marginBottom: 12 }}>
+          {err}
+        </div>
+      )}
+
+      <form id="service-form" onSubmit={onSubmit} style={styles.card}>
+        {/* Primera fila: Client ID / Service Name */}
+        <div style={styles.grid}>
+          <div>
+            <label style={styles.label}>Client ID *</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              placeholder="Ej. 2"
+              value={form.client_id}
+              onChange={onChange('client_id')}
+              style={styles.input}
+            />
+            <div style={styles.hint}>Ingresa el ID del cliente (número).</div>
+          </div>
+
+          <div>
+            <label style={styles.label}>Service Name *</label>
+            <input
+              type="text"
+              placeholder="Ej. Diagnóstico"
+              value={form.service_name}
+              onChange={onChange('service_name')}
+              style={styles.input}
+            />
+          </div>
+
+          {/* Descripción ancho completo */}
+          <div style={styles.gridFull}>
+            <label style={styles.label}>Description</label>
+            <textarea
+              placeholder="Detalles del servicio…"
+              value={form.description}
+              onChange={onChange('description')}
+              style={styles.textarea}
+            />
+          </div>
+
+          {/* Cantidad / Precio Unitario */}
+          <div>
+            <label style={styles.label}>Quantity</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="1"
+              min="0"
+              value={form.quantity}
+              onChange={onChange('quantity')}
+              style={styles.input}
+            />
+          </div>
+
+          <div>
+            <label style={styles.label}>Unit Price</label>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              value={form.unit_price}
+              onChange={onChange('unit_price')}
+              style={styles.input}
+            />
+          </div>
+
+          {/* Total (solo lectura) / Status */}
+          <div>
+            <label style={styles.label}>Total (auto)</label>
+            <input
+              type="text"
+              value={
+                Number.isFinite(total)
+                  ? total.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 })
+                  : '-'
+              }
+              readOnly
+              style={{ ...styles.input, background: '#f8fafc' }}
+              tabIndex={-1}
+            />
+          </div>
+
+          <div>
+            <label style={styles.label}>Status</label>
+            <select
+              value={form.status}
+              onChange={onChange('status')}
+              style={styles.input}
+            >
+              <option value="open">open</option>
+              <option value="pending">pending</option>
+              <option value="closed">closed</option>
+              <option value="paid">paid</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={styles.actions}>
+          <Link to="/services" className="btn" style={styles.btn}>Cancel</Link>
+          <button
+            type="submit"
+            className="btn primary"
+            style={{ ...styles.btn, ...styles.btnPrimary }}
+            disabled={saving}
+          >
+            {saving ? 'Saving…' : 'Save Service'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+

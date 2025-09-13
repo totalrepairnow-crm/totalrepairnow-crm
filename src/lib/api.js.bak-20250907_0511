@@ -1,0 +1,93 @@
+const TOKEN_KEY = 'token';
+const API_BASE = '/api';
+
+/* ---------------------- TOKEN HELPERS ---------------------- */
+export function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+export function setToken(t) {
+  try { localStorage.setItem(TOKEN_KEY, t); } catch {}
+}
+export function clearToken() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch {}
+}
+
+/* ---------------------- ROLE (desde JWT) ---------------------- */
+export function getRole() {
+  const t = getToken();
+  if (!t) return null;
+  try {
+    const [, payload] = t.split('.');
+    const json = JSON.parse(atob(payload));
+    return json.role || null;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------------- API FETCH (con auth) ---------------------- */
+export async function apiFetch(path, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  headers.set('Accept', 'application/json');
+  if (!headers.has('Content-Type') && opts.body) headers.set('Content-Type', 'application/json');
+
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  const text = await res.text();
+
+  let data;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+  if (!res.ok) {
+    const msg = (data && (data.error || data.message)) || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/* ---------------------- AUTH ---------------------- */
+export async function login(email, password) {
+  const data = await apiFetch('/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+  const tok = data?.accessToken || data?.token;
+  if (tok) setToken(tok);
+  return data;
+}
+
+/* ---------------------- DASHBOARD ---------------------- */
+export async function getDashboard() {
+  return apiFetch('/dashboard');
+}
+
+/* ---------------------- USERS ---------------------- */
+export async function getUsers() {
+  return apiFetch('/users');
+}
+// alias opcional por si algún componente usa listUsers()
+export const listUsers = getUsers;
+
+/* ---------------------- CLIENTS ---------------------- */
+export async function listClients({ q = '', page = 1, limit = 10 } = {}) {
+  const qs = new URLSearchParams({
+    q: q || '',
+    page: String(page || 1),
+    limit: String(limit || 10),
+  });
+  return apiFetch(`/clients?${qs.toString()}`);
+}
+
+export async function getClient(id) {
+  return apiFetch(`/clients/${id}`);
+}
+
+// ¡SOLO una definición! (evita "Identifier createClient has already been declared")
+export async function createClient(payload) {
+  return apiFetch('/clients', {
+    method: 'POST',
+    body: JSON.stringify(payload || {}),
+  });
+}

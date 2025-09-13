@@ -1,0 +1,69 @@
+// ~/crm_app/frontend_v2/crm-frontend-v2/src/lib/api.js
+const API_BASE = '/api';
+
+export function getToken() {
+  return localStorage.getItem('token') || localStorage.getItem('accessToken') || null;
+}
+export function setToken(value) {
+  if (!value) return;
+  localStorage.setItem('token', value);
+  localStorage.setItem('accessToken', value);
+}
+export function clearToken() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('accessToken');
+}
+
+export async function apiFetch(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const t = getToken();
+  if (t) headers['Authorization'] = `Bearer ${t}`;
+
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => String(res.status));
+    throw new Error(`API ${res.status}: ${msg}`);
+  }
+  const ct = res.headers.get('content-type') || '';
+  return ct.includes('application/json') ? res.json() : res.text();
+}
+
+export async function login(email, password) {
+  const data = await apiFetch('/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password })
+  });
+  const t = data?.accessToken || data?.token;
+  if (t) setToken(t);
+  return data;
+}
+
+// --- Clients (server-side search + pagination) ---
+export async function getClients(params = {}) {
+  const qsp = new URLSearchParams();
+  if (params.q)     qsp.set('q', params.q);
+  if (params.page)  qsp.set('page', String(params.page));
+  if (params.limit) qsp.set('limit', String(params.limit));
+  const qs = qsp.toString();
+  return apiFetch(`/clients${qs ? `?${qs}` : ''}`);
+}
+
+export async function getClient(id) {
+  return apiFetch(`/clients/${id}`);
+}
+
+export async function createClient(payload) {
+  return apiFetch('/clients', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
+// --- Users / Dashboard ---
+export async function getUsers() {
+  return apiFetch('/users');
+}
+export async function getDashboard() {
+  return apiFetch('/dashboard');
+}
+
