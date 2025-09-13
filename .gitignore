@@ -24,3 +24,16 @@ backups_*/
 .DS_Store
 .idea/
 .vscode/
+# --- Dependencias ---
+/node_modules/
+/backend/node_modules/
+/frontend_v2/crm-frontend-v2/node_modules/
+
+# --- Builds del frontend v2 ---
+/frontend_v2/crm-frontend-v2/dist/
+/frontend_v2/crm-frontend-v2/.vite/
+
+# --- Varias / sensibles ---
+*.log
+.env
+**/.env
