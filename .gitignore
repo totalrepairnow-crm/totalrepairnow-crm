@@ -37,3 +37,7 @@ backups_*/
 *.log
 .env
 **/.env
+
+# Backups & ops (ignore)
+backend/routes/*.bak*
+ops/
