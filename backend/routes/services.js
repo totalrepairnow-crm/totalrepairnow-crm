@@ -1,77 +1,79 @@
-// routes/services.js
 const express = require('express');
 const router = express.Router();
-
-// El módulo ../db debe exportar un Pool de pg o algo con .query(sql, params)
 const db = require('../db');
 
-// Helpers
-function toInt(v, def) {
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) && n > 0 ? n : def;
+// ---------- helpers ----------
+const toInt = (v, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+};
+const toStr = (v) => (v ?? '').toString().trim();
+const normStatus = (s) => (toStr(s).toLowerCase() || 'scheduled');
+
+/**
+ * Normaliza una línea de servicio desde distintos nombres:
+ * - description | service_name
+ * - quantity | qty
+ * - unit_price | price
+ * NO ponemos "total" porque lo calcula la DB (columna generada o trigger).
+ */
+function normalizeLine(line = {}, clientId) {
+  const description = toStr(line.description) || toStr(line.service_name);
+  const quantity    = toInt(line.quantity ?? line.qty, 1);
+  const unit_price  = toInt(line.unit_price ?? line.price, 0);
+  const status      = normStatus(line.status);
+
+  if (!clientId)      return { ok: false, msg: 'client_id is required' };
+  if (!description)   return { ok: false, msg: 'description/service_name is required' };
+
+  return {
+    ok: true,
+    row: {
+      client_id: toInt(clientId, 0),
+      service_name: description,
+      description,
+      quantity,
+      unit_price,
+      status,
+    }
+  };
 }
 
-// GET /api/services?client_id=&status=&q=&page=&limit=
+// ---------- LIST ----------
 router.get('/', async (req, res) => {
   try {
-    const page = toInt(req.query.page, 1);
-    const limit = toInt(req.query.limit, 10);
-    const offset = (page - 1) * limit;
-
-    const { client_id, status, q } = req.query;
-
+    const { q = '', client_id = '', status = '', page = 1, limit = 10 } = req.query || {};
     const where = [];
     const params = [];
     let p = 1;
 
-    if (client_id) {
-      where.push(`s.client_id = $${p++}`);
-      params.push(Number(client_id));
-    }
-    if (status) {
-      where.push(`s.status = $${p++}`);
-      params.push(status);
-    }
-    if (q && q.trim()) {
-      where.push(`(s.service_name ILIKE $${p} OR s.description ILIKE $${p})`);
-      params.push(`%${q.trim()}%`);
-      p++;
-    }
+    if (q)         { where.push(`(service_name ILIKE $${p} OR description ILIKE $${p})`); params.push(`%${q}%`); p++; }
+    if (client_id) { where.push(`client_id = $${p}`); params.push(Number(client_id)); p++; }
+    if (status)    { where.push(`status = $${p}`);    params.push(status); p++; }
 
     const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const pageNum  = Math.max(1, Number(page));
+    const limitNum = Math.max(1, Math.min(100, Number(limit)));
+    const offset   = (pageNum - 1) * limitNum;
 
-    const countSql = `SELECT COUNT(*)::int AS count FROM services s ${whereSQL}`;
-    const countRow = await db.query(countSql, params);
-    const total = countRow.rows[0]?.count || 0;
-
-    const listSql = `
-      SELECT
-        s.id,
-        s.client_id,
-        s.service_name,
-        s.description,
-        s.quantity,
-        s.unit_price,
-        COALESCE(s.total, s.quantity * s.unit_price) AS total,
-        s.status,
-        s.created_at
-      FROM services s
+    const listSQL = `
+      SELECT id, client_id, service_name, description, quantity, unit_price, total, status, created_at
+      FROM services
       ${whereSQL}
-      ORDER BY s.created_at DESC, s.id DESC
-      LIMIT $${p++} OFFSET $${p++}
+      ORDER BY id DESC
+      LIMIT ${limitNum} OFFSET ${offset}
     `;
-    const listParams = params.concat([limit, offset]);
-    const rows = (await db.query(listSql, listParams)).rows;
+    const countSQL = `SELECT COUNT(*)::int AS n FROM services ${whereSQL}`;
 
-    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const [listRes, countRes] = await Promise.all([
+      db.query(listSQL, params),
+      db.query(countSQL, params),
+    ]);
+
     res.json({
-      page,
-      limit,
-      total,
-      totalPages,
-      hasPrev: page > 1,
-      hasNext: page < totalPages,
-      items: rows
+      page: pageNum,
+      total: countRes.rows[0]?.n ?? 0,
+      items: listRes.rows || []
     });
   } catch (err) {
     console.error('GET /services error:', err);
@@ -79,98 +81,92 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/services/:id
+// ---------- DETAIL ----------
 router.get('/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const sql = `
-      SELECT
-        s.id,
-        s.client_id,
-        s.service_name,
-        s.description,
-        s.quantity,
-        s.unit_price,
-        COALESCE(s.total, s.quantity * s.unit_price) AS total,
-        s.status,
-        s.created_at
-      FROM services s
-      WHERE s.id = $1
-    `;
-    const r = await db.query(sql, [id]);
+    const r = await db.query(
+      `SELECT id, client_id, service_name, description, quantity, unit_price, total, status, created_at
+       FROM services WHERE id = $1`,
+      [id]
+    );
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json(r.rows[0]);
   } catch (err) {
     console.error('GET /services/:id error:', err);
-    res.status(500).json({ error: 'Internal error fetching service' });
+    res.status(500).json({ error: 'Internal error loading service' });
   }
 });
 
-// POST /api/services
+// ---------- CREATE (single o batch) ----------
 router.post('/', async (req, res) => {
   try {
-    const {
-      client_id,
-      service_name,
-      description = '',
-      quantity,
-      unit_price,
-      status = 'open'
-    } = req.body || {};
+    const body = req.body || {};
+    const clientId = toInt(body.client_id ?? body.clientId, 0);
+    if (!clientId) return res.status(400).json({ error: 'client_id is required' });
 
-    if (!client_id || !service_name || !quantity || !unit_price) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    // Batch
+    if (Array.isArray(body.lines) && body.lines.length) {
+      const rows = [];
+      for (const ln of body.lines) {
+        const norm = normalizeLine(ln, clientId);
+        if (!norm.ok) return res.status(400).json({ error: `Invalid line: ${norm.msg}` });
+        rows.push(norm.row);
+      }
+
+      const cols = ['client_id','service_name','description','quantity','unit_price','status'];
+      const values = [];
+      const params = [];
+      let p = 1;
+      for (const r of rows) {
+        params.push(r.client_id, r.service_name, r.description, r.quantity, r.unit_price, r.status);
+        values.push(`($${p}, $${p+1}, $${p+2}, $${p+3}, $${p+4}, $${p+5})`);
+        p += 6;
+      }
+
+      const sql = `
+        INSERT INTO services (${cols.join(',')})
+        VALUES ${values.join(',')}
+        RETURNING id, client_id, service_name, description, quantity, unit_price, total, status, created_at
+      `;
+      const ins = await db.query(sql, params);
+      return res.status(201).json({ items: ins.rows });
     }
 
-    const qty = Number(quantity);
-    const price = Number(unit_price);
-    if (!(qty > 0) || !(price >= 0)) {
-      return res.status(400).json({ error: 'Invalid quantity or unit_price' });
-    }
+    // Single
+    const norm = normalizeLine(body, clientId);
+    if (!norm.ok) return res.status(400).json({ error: norm.msg || 'Invalid payload' });
+    const R = norm.row;
 
-    const sql = `
-      INSERT INTO services
-        (client_id, service_name, description, quantity, unit_price, total, status)
-      VALUES ($1, $2, $3, $4, $5, $4 * $5, $6)
-      RETURNING id, client_id, service_name, description, quantity, unit_price,
-                total, status, created_at
-    `;
-    const params = [client_id, service_name, description, qty, price, status];
-    const r = await db.query(sql, params);
-    res.status(201).json(r.rows[0]);
+    const ins = await db.query(
+      `INSERT INTO services (client_id, service_name, description, quantity, unit_price, status)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING id, client_id, service_name, description, quantity, unit_price, total, status, created_at`,
+      [R.client_id, R.service_name, R.description, R.quantity, R.unit_price, R.status]
+    );
+    res.status(201).json(ins.rows[0]);
   } catch (err) {
     console.error('POST /services error:', err);
-    res.status(500).json({ error: 'Internal error creating service' });
+    res.status(500).json({ error: 'Internal error creating service(s)' });
   }
 });
 
-// PUT /api/services/:id
+// ---------- UPDATE ----------
 router.put('/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { client_id, service_name, description, quantity, unit_price, status } = req.body || {};
 
-    // SET dinámico
     const sets = [];
     const params = [];
     let p = 1;
 
-    if (client_id !== undefined) { sets.push(`client_id = $${p++}`); params.push(client_id); }
-    if (service_name !== undefined) { sets.push(`service_name = $${p++}`); params.push(service_name); }
-    if (description !== undefined) { sets.push(`description = $${p++}`); params.push(description); }
-    if (quantity !== undefined) { sets.push(`quantity = $${p++}`); params.push(Number(quantity)); }
-    if (unit_price !== undefined) { sets.push(`unit_price = $${p++}`); params.push(Number(unit_price)); }
-    if (status !== undefined) { sets.push(`status = $${p++}`); params.push(status); }
-
-    // Si cambian qty o price, recalcular total siempre que alguno cambie
-    if (quantity !== undefined || unit_price !== undefined) {
-      // usa los valores nuevos si llegan, si no, los existentes en la fila
-      sets.push(`total = COALESCE($${p++}, quantity) * COALESCE($${p++}, unit_price)`);
-      params.push(
-        quantity !== undefined ? Number(quantity) : null,
-        unit_price !== undefined ? Number(unit_price) : null
-      );
-    }
+    if (client_id !== undefined)   { sets.push(`client_id = $${p++}`);    params.push(client_id); }
+    if (service_name !== undefined){ sets.push(`service_name = $${p++}`); params.push(toStr(service_name)); }
+    if (description !== undefined) { sets.push(`description = $${p++}`);  params.push(toStr(description)); }
+    if (quantity !== undefined)    { sets.push(`quantity = $${p++}`);     params.push(toInt(quantity, 1)); }
+    if (unit_price !== undefined)  { sets.push(`unit_price = $${p++}`);   params.push(toInt(unit_price, 0)); }
+    if (status !== undefined)      { sets.push(`status = $${p++}`);       params.push(normStatus(status)); }
 
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 
@@ -178,8 +174,7 @@ router.put('/:id', async (req, res) => {
       UPDATE services
       SET ${sets.join(', ')}
       WHERE id = $${p}
-      RETURNING id, client_id, service_name, description, quantity, unit_price,
-                total, status, created_at
+      RETURNING id, client_id, service_name, description, quantity, unit_price, total, status, created_at
     `;
     params.push(id);
     const r = await db.query(sql, params);
@@ -191,7 +186,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/services/:id
+// ---------- DELETE ----------
 router.delete('/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -205,4 +200,3 @@ router.delete('/:id', async (req, res) => {
 });
 
 module.exports = router;
-

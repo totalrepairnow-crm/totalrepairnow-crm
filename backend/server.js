@@ -87,6 +87,7 @@ mountIfExists('/api/users',     './routes/users');
 mountIfExists('/api',           './routes/uploads');
 mountIfExists('/api/metrics',   './routes/metrics');
 mountIfExists('/api/dashboard', './routes/dashboard');
+mountIfExists('/api/invoices', './routes/invoices');
 
 // 404 para endpoints API no encontrados
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));

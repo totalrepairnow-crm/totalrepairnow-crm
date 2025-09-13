@@ -13,17 +13,29 @@ export function getToken() {
   );
 }
 
-// ⚠️ Exportamos setToken para satisfacer imports existentes (Login.jsx)
+// --- Notificador de cambios de auth (para ocultar/mostrar Login/Logout) ---
+function emitAuthChanged() {
+  try { window.dispatchEvent(new Event('auth-changed')); } catch {}
+}
+
+// Permite al Header suscribirse a cambios de sesión
+export function onAuthChange(handler) {
+  window.addEventListener('auth-changed', handler);
+  return () => window.removeEventListener('auth-changed', handler);
+}
+
+// Set/Clear token (compat con código viejo) + emite evento
 export function setToken(t) {
   if (!t) return;
   localStorage.setItem('accessToken', t);
-  // compat con código viejo
   localStorage.setItem('token', t);
+  emitAuthChanged();
 }
 
 export function clearToken() {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('token');
+  emitAuthChanged();
 }
 
 function decodeJWT(tok) {
@@ -44,9 +56,10 @@ export function getRole() {
 export function isAdminFromToken() {
   return getRole() === 'admin';
 }
-// Alias por si algún componente usa isAdmin
+// Alias por compatibilidad
 export const isAdmin = isAdminFromToken;
 
+// Querystring helper
 function joinQs(obj = {}) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(obj)) {
@@ -57,6 +70,7 @@ function joinQs(obj = {}) {
   return s ? `?${s}` : '';
 }
 
+// Wrapper fetch con auth
 export async function apiFetch(path, opts = {}) {
   const url = path.startsWith('/api') ? path : `${API_BASE}${path}`;
   const token = getToken();
@@ -89,7 +103,6 @@ export async function login({ email, password }) {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   });
-  // El backend devuelve { token, accessToken }
   const tok = r?.accessToken || r?.token;
   if (tok) setToken(tok);
   return r;
@@ -152,6 +165,7 @@ export async function getService(id) {
   return apiFetch(`/services/${id}`);
 }
 
+// Acepta single payload o batch { client_id, lines:[...] }
 export async function createService(payload) {
   return apiFetch('/services', {
     method: 'POST',
@@ -188,7 +202,6 @@ export async function getUser(id) {
 }
 
 export async function createUser(payload) {
-  // payload: { first_name, last_name, email, phone, role, password }
   return apiFetch('/users', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -218,7 +231,42 @@ export function fullName(u = {}) {
    Dashboard
 ============================ */
 export async function getDashboard(params = {}) {
-  // permite filtros como ?range=30d si en el futuro los usas
   return apiFetch(`/dashboard${joinQs(params)}`);
 }
-export const fetchDashboard = getDashboard; // alias por compatibilidad
+export const fetchDashboard = getDashboard;
+
+/* ============================
+   Invoices (nuevo)
+============================ */
+export async function draftInvoice({ client_id, items, discount = 0, tax = 0, currency = 'USD' }) {
+  // items: [{ name/description, quantity, unit_cost/unit_price }]
+  return apiFetch('/invoices/draft', {
+    method: 'POST',
+    body: JSON.stringify({ client_id, items, discount, tax, currency }),
+  });
+}
+
+export async function createInvoice({ client_id, service_ids, discount = 0, tax = 0, currency = 'USD' }) {
+  if (!client_id || !service_ids?.length) throw new Error('client_id y service_ids requeridos');
+  return apiFetch('/invoices/create', {
+    method: 'POST',
+    body: JSON.stringify({ client_id, service_ids, discount, tax, currency }),
+  });
+}
+
+export async function getInvoice(id) {
+  return apiFetch(`/invoices/${id}`);
+}
+
+export function getInvoicePdfUrl(id) {
+  return `${API_BASE}/invoices/${id}/pdf`;
+}
+
+export async function fetchInvoicePdf(id) {
+  const token = getToken();
+  const res = await fetch(getInvoicePdfUrl(id), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res; // Response (para blob/stream en el caller)
+}

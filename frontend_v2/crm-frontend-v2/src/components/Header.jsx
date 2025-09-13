@@ -1,51 +1,62 @@
 // src/components/Header.jsx
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import { getToken, clearToken, getRole } from "../lib/api";
+import React, { useEffect, useState } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { getToken, clearToken, getRole, onAuthChange } from "../lib/api";
 
-export default function Header(){
-  const loc = useLocation();
-  const nav = useNavigate();
-  const authed = !!getToken();
-  const role = getRole();
+export default function Header() {
+  const [authed, setAuthed] = useState(!!getToken());
+  const [role, setRole] = useState(getRole());
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const isActive = (path) =>
-    loc.pathname === path || loc.pathname.startsWith(path + "/");
+  const inLogin = location.pathname.endsWith("/login"); // cubre /login y /v2/login
 
-  const doLogout = () => {
+  useEffect(() => {
+    const sync = () => {
+      setAuthed(!!getToken());
+      setRole(getRole());
+    };
+    const off = onAuthChange(sync);
+    sync();
+    return () => { try { off && off(); } catch {} };
+  }, [location.pathname]);
+
+  const logout = () => {
     clearToken();
-    nav("/login", { replace: true });
+    setAuthed(false);
+    setRole("");
+    navigate("/login");
   };
 
+  const showLogin = !authed && !inLogin;
+
   return (
-    <header className="header">
-      <div className="header-inner">
-        <Link to="/dashboard" className="brand" title="Home">
+    <header className="trn-header">
+      <div className="trn-header__inner container">
+        <Link to="/dashboard" className="trn-brand" aria-label="Home">
           <img
             src="/v2/logo.png"
-            alt="Total Repair Now"
-            onError={(e)=>{ e.currentTarget.style.display='none'; }}
+            alt="Logo"
+            height={28}
+            onError={(e) => { e.currentTarget.src = "/logo.png"; }}
           />
-          <span className="brand-title">TRN CRM</span>
+          <span className="trn-brand__title">Total Repair Now CRM</span>
         </Link>
 
-        {authed && (
-          <nav className="nav">
-            <Link className={isActive("/dashboard") ? "active" : ""} to="/dashboard">Dashboard</Link>
-            <Link className={isActive("/clients") ? "active" : ""} to="/clients">Clients</Link>
-            <Link className={isActive("/services") ? "active" : ""} to="/services">Services</Link>
-            {role === "admin" && (
-              <Link className={isActive("/users") ? "active" : ""} to="/users">Users</Link>
-            )}
-          </nav>
-        )}
-
-        {authed ? (
-          <button className="btn" onClick={doLogout}>Logout</button>
-        ) : (
-          <Link className="btn" to="/login">Login</Link>
-        )}
+        <nav className="trn-nav">
+          {authed ? (
+            <>
+              <NavLink to="/dashboard" className="trn-nav__link">Dashboard</NavLink>
+              <NavLink to="/clients" className="trn-nav__link">Clients</NavLink>
+              <NavLink to="/services" className="trn-nav__link">Services</NavLink>
+              <NavLink to="/users" className="trn-nav__link">Users</NavLink>
+              <button className="btn" onClick={logout}>Logout</button>
+            </>
+          ) : (
+            showLogin && <Link className="btn btn--primary" to="/login">Login</Link>
+          )}
+        </nav>
       </div>
     </header>
   );
 }
-
