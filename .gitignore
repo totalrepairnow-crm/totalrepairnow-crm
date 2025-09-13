@@ -1,17 +1,26 @@
+# Node
 node_modules/
+**/node_modules/
 npm-debug.log*
-pnpm-lock.yaml
-yarn.lock
+yarn-error.log*
+
+# Builds / artefactos
+dist/
+build/
+*.log
+
+# Environments (¡nunca subas llaves!)
 .env
 .env.*
-*.sqlite
+
+# Backups / temporales
+*.bak
+*.bak-*
+*.save
+backups_*/
+*.tgz
+
+# OS / IDE
 .DS_Store
-coverage/
-cypress/videos/
-cypress/screenshots/
-crm_tests/node_modules/
-frontend/node_modules/
-
-# Frontend v2 build
-frontend_v2/crm-frontend-v2/dist/
-
+.idea/
+.vscode/
