@@ -1,77 +1,88 @@
-describe('CRM API Smoke', () => {
+// crm_tests/cypress/e2e/smoke.api.cy.js
+// Ejecuta con envs (en GitHub o local):
+//  CYPRESS_BASE_URL=https://crm.totalrepairnow.com \
+//  CYPRESS_ADMIN_USER="admin@totalrepairnow.com" \
+//  CYPRESS_ADMIN_PASS="TU_PASSWORD" \
+//  npx cypress run --spec "cypress/e2e/smoke.api.cy.js"
+
+describe('CRM API — Smoke', () => {
+  const BASE = `${Cypress.env('BASE_URL')}/api`;
+  const ADMIN_USER = Cypress.env('ADMIN_USER') || 'admin@totalrepairnow.com';
+  const ADMIN_PASS = Cypress.env('ADMIN_PASS') || 'Alfa12345.';
+
   let token;
   let clientId;
+  let createdServiceId;
 
-  before(() => {
-    // 1) Health
-    cy.request({
-      method: 'GET',
-      url: '/api/health',
-      failOnStatusCode: false,
-    }).then((res) => {
-      // Debe ser 200 si el backend local está arriba
-      expect(res.status).to.eq(200);
-      expect(res.body).to.have.property('status', 'ok');
-    });
+  const auth = () => ({ Authorization: `Bearer ${token}` });
 
-    // 2) Login (username/email aceptado por el normalizador del backend)
-    const adminUser = Cypress.env('ADMIN_USER') || 'admin@totalrepairnow.com';
-    const adminPass = Cypress.env('ADMIN_PASS') || 'Alfa12345.';
+  it('health (invoices/health) responde 200', () => {
+    cy.request(`${BASE}/invoices/health`).its('status').should('eq', 200);
+  });
 
-    cy.request('POST', '/api/login', {
-      username: adminUser,
-      password: adminPass,
+  it('puede hacer login y obtener token', () => {
+    cy.request('POST', `${BASE}/login`, {
+      // el backend acepta email/password; también soporta "username",
+      // pero usamos "email" para ser explícitos.
+      email: ADMIN_USER,
+      password: ADMIN_PASS,
     }).then((res) => {
       expect(res.status).to.eq(200);
-      expect(res.body).to.have.property('token');
-      token = res.body.token;
+      token = res.body?.accessToken || res.body?.token;
+      expect(token, 'JWT').to.be.a('string').and.have.length.greaterThan(10);
     });
   });
 
-  it('lists clients and selects the first id', () => {
-    cy.request({
-      method: 'GET',
-      url: '/api/clients',
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((res) => {
+  it('lista clientes y toma uno', () => {
+    cy.request({ url: `${BASE}/clients`, headers: auth() }).then((res) => {
       expect(res.status).to.eq(200);
-      expect(res.body).to.be.an('array').and.to.have.length.greaterThan(0);
-      clientId = res.body[0].id;
-      expect(clientId, 'first client id').to.be.a('number');
+      // /clients puede devolver {items:[...], ...} (paginado) o un array simple;
+      const items = Array.isArray(res.body) ? res.body : res.body.items || [];
+      expect(items.length, 'cantidad de clientes').to.be.greaterThan(0);
+      clientId = items[0].id;
+      expect(clientId, 'client id').to.be.a('number');
     });
   });
 
-  it('lists services for selected client', () => {
-    cy.request({
-      method: 'GET',
-      url: `/api/clients/${clientId}/services`,
-      headers: { Authorization: `Bearer ${token}` },
-    }).then((res) => {
+  it('lista servicios (autenticado)', () => {
+    cy.request({ url: `${BASE}/services`, headers: auth() }).then((res) => {
       expect(res.status).to.eq(200);
       expect(res.body).to.be.an('array');
     });
   });
 
-  it('creates a service and finds it on relist', () => {
-    const payload = { service_name: 'Initial Review', status: 'open' };
+  it('crea un servicio y lo verifica en el listado', () => {
+    const name = `Smoke Service ${Date.now()}`;
+    const payload = {
+      client_id: clientId,
+      service_name: name,
+      description: name,
+      quantity: 1,
+      unit_price: 10,
+      status: 'scheduled',
+    };
 
     cy.request({
       method: 'POST',
-      url: `/api/clients/${clientId}/services`,
-      headers: { Authorization: `Bearer ${token}` },
+      url: `${BASE}/services`,
+      headers: auth(),
       body: payload,
-    }).then((res) => {
-      expect(res.status).to.eq(201);
-      expect(res.body).to.have.property('id');
-      return cy.request({
-        method: 'GET',
-        url: `/api/clients/${clientId}/services`,
-        headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        // En algunos entornos devuelve 200, en otros 201
+        expect(res.status).to.be.within(200, 201);
+        createdServiceId = res.body?.id;
+        expect(createdServiceId, 'service id creado').to.be.a('number');
+
+        return cy.request({ url: `${BASE}/services`, headers: auth() });
+      })
+      .then((res2) => {
+        const rows = res2.body;
+        // Verificamos por (client_id + nombre) para evitar falsos positivos
+        const found = rows.some(
+          (s) => s.client_id === clientId && s.service_name === payload.service_name,
+        );
+        expect(found, 'servicio recién creado visible en listado').to.eq(true);
       });
-    }).then((res2) => {
-      const names = res2.body.map((s) => s.service_name);
-      expect(names).to.include('Initial Review');
-    });
   });
 });
-
