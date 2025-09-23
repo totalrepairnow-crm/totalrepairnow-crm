@@ -1,36 +1,53 @@
-import React from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { getToken, getUserFromToken, logoutAndGoLogin } from "../utils/auth";
+// src/components/Header.jsx
+import React, { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { getToken, onAuthChange, isAdminFromToken, logout } from '../lib/api';
 
-export default function Header(){
-  const nav = useNavigate();
-  const token = getToken();
-  const user = token ? getUserFromToken(token) : null;
-  const isLogin = typeof window!=='undefined' && window.location.pathname === '/login';
+export default function Header() {
+  const [authed, setAuthed] = useState(!!getToken());
+  const [isAdmin, setIsAdmin] = useState(isAdminFromToken());
+  const loc = useLocation();
+  const navigate = useNavigate();
 
-  function doLogout(e){
-    e.preventDefault();
-    logoutAndGoLogin();
-  }
+  useEffect(() => {
+    const off = onAuthChange(() => {
+      setAuthed(!!getToken());
+      setIsAdmin(isAdminFromToken());
+    });
+    return off;
+  }, []);
+
+  const onLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  // Oculta botones en /login, pero el header siempre se muestra
+  const hideNav = loc.pathname.startsWith('/login');
 
   return (
-    <header className="header" style={{display:'flex',alignItems:'center',gap:16,padding:'10px 16px'}}>
-      <div className="brand" style={{display:'flex',alignItems:'center',gap:10}}>
-        <img src="/logo.png" alt="CRM" style={{height:28}} />
-        <Link to="/" className="brand-title" style={{fontWeight:700}}>Total Repair Now — CRM</Link>
+    <header className="topbar">
+      <div className="container flex items-center justify-between">
+        <Link to="/dashboard" className="brand flex items-center gap-2">
+          <img src="/v2/logo.png" alt="Total Repair Now" className="h-10 w-10" />
+          <span className="brand-title">Total Repair Now CRM</span>
+        </Link>
+
+        {!hideNav && authed && (
+          <nav className="nav flex items-center gap-3">
+            <Link to="/clients" className="btn-link">Clients</Link>
+            <Link to="/services" className="btn-link">Services</Link>
+            {isAdmin && <Link to="/users" className="btn-link">Users</Link>}
+            <button className="btn" onClick={onLogout}>Logout</button>
+          </nav>
+        )}
+
+        {!hideNav && !authed && (
+          <nav className="nav">
+            <Link to="/login" className="btn">Login</Link>
+          </nav>
+        )}
       </div>
-      {token && (
-        <nav style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:12}}>
-          <Link to="/">Dashboard</Link>
-          <Link to="/clients">Clientes</Link>
-          <Link to="/users">Usuarios</Link>
-          <span className="api-chip">{user?.email || 'Sesión'} {user?.role ? `(${user.role})` : ''}</span>
-          <a href="/logout" onClick={doLogout} className="btn secondary" style={{padding:'6px 10px'}}>Salir</a>
-        </nav>
-      )}
-      {!token && !isLogin && (
-        <nav style={{marginLeft:'auto'}}><Link className="btn" to="/login">Iniciar sesión</Link></nav>
-      )}
     </header>
   );
 }

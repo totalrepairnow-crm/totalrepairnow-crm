@@ -1,285 +1,190 @@
-import React, { useEffect, useState, useRef } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+// src/pages/ClientEdit.jsx
+import React, { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { getRole, getClient, updateClient } from "../lib/api";
 
-function urlFrom(any) {
-  if (!any) return null;
-  if (typeof any === "string") return any;
-  if (typeof any === "object") {
-    return any.url || any.href || any.path || any.location || any.link || null;
-  }
-  return null;
-}
-function normalizeUploads(arr) {
-  if (!Array.isArray(arr)) return [];
-  const out = [];
-  for (const it of arr) {
-    const u = urlFrom(it);
-    if (u) out.push(u);
-  }
-  return out;
-}
+function safe(v){ return v ?? ""; }
 
-export default function ClientEdit() {
+export default function ClientEdit(){
   const { id } = useParams();
-  const navigate = useNavigate();
-
-  // datos cliente
-  const [client, setClient] = useState(null);
-  const [empresa, setEmpresa] = useState("");
-  const [email, setEmail] = useState("");
-  const [telefono, setTelefono] = useState("");
-  const [estado, setEstado] = useState("activo");
-
-  // servicios
-  const [services, setServices] = useState([]);
-  const [svcTitle, setSvcTitle] = useState("");
-  const [svcAmount, setSvcAmount] = useState("");
-  const [svcStatus, setSvcStatus] = useState("pendiente");
-
-  // fotos
-  const [uploads, setUploads] = useState([]);
-  const [uploadMsg, setUploadMsg] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef(null);
+  const nav = useNavigate();
+  const isAdmin = getRole() === "admin";
 
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  function authHeaders(json = true) {
-    const h = {};
-    if (token) h["Authorization"] = `Bearer ${token}`;
-    if (json) h["Content-Type"] = "application/json";
-    return h;
-  }
+  const [first_name, setFirstName] = useState("");
+  const [last_name, setLastName]   = useState("");
+  const [email, setEmail]         = useState("");
+  const [phone_mobile, setPhoneMobile] = useState("");
+  const [phone_home, setPhoneHome]     = useState("");
 
-  async function fetchClient() {
-    const r = await fetch(`/api/clients/${id}`, { headers: authHeaders(false) });
-    if (r.status === 401) { navigate("/login", { replace: true }); return null; }
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    setClient(data);
-    setEmpresa(data.empresa || "");
-    setEmail(data.email || "");
-    setTelefono(data.telefono || "");
-    setEstado(data.estado || "activo");
-    return data;
-  }
+  const [address_line1, setAddress1] = useState("");
+  const [address_line2, setAddress2] = useState("");
+  const [city, setCity]             = useState("");
+  const [state, setState]           = useState("");
+  const [postal_code, setPostal]    = useState("");
+  const [country, setCountry]       = useState("");
 
-  async function fetchServicesWithFallback(numID, uuidID) {
-    try {
-      let r = await fetch(`/api/clients/${numID}/services`, { headers: authHeaders(false) });
-      if (!r.ok) throw new Error(`HTTP ${r.status} (num)`);
-      let d = await r.json();
-      let items = Array.isArray(d.items) ? d.items : [];
-      if (items.length > 0) { setServices(items); return; }
-      if (uuidID) {
-        r = await fetch(`/api/clients/${uuidID}/services`, { headers: authHeaders(false) });
-        if (r.ok) {
-          d = await r.json();
-          items = Array.isArray(d.items) ? d.items : [];
-          setServices(items);
-        }
-      }
-    } catch (e) {
-      console.error("services error:", e);
-    }
-  }
+  const [warranty_company, setWarranty] = useState("");
+  const [lead_source, setLeadSource]    = useState("");
+  const [referred_by, setReferredBy]    = useState("");
 
-  async function fetchUploadsWithFallback(numID, uuidID) {
-    try {
-      let r = await fetch(`/api/clients/${numID}/uploads`, { headers: authHeaders(false) });
-      if (!r.ok) throw new Error(`HTTP ${r.status} (num)`);
-      let d = await r.json();
-      let items = normalizeUploads(d.items);
-      if (items.length > 0) { setUploads(items); return; }
-      if (uuidID) {
-        r = await fetch(`/api/clients/${uuidID}/uploads`, { headers: authHeaders(false) });
-        if (r.ok) {
-          d = await r.json();
-          items = normalizeUploads(d.items);
-          setUploads(items);
-        }
-      }
-    } catch (e) {
-      console.error("uploads error:", e);
-    }
-  }
-
-  async function loadAll() {
-    try {
+  useEffect(()=>{
+    let alive = true;
+    (async ()=>{
+      setErr("");
       setLoading(true);
-      const c = await fetchClient();
-      if (!c) return;
-      const numID = c.id ?? id;
-      const uuidID = c.cliente_id ?? null;
-      await Promise.all([
-        fetchServicesWithFallback(numID, uuidID),
-        fetchUploadsWithFallback(numID, uuidID),
-      ]);
-    } catch (e) {
-      setErr("No se pudo cargar el cliente");
-    } finally {
-      setLoading(false);
-    }
-  }
+      try{
+        const c = await getClient(id);
+        if(!alive) return;
+        setFirstName(safe(c.first_name));
+        setLastName(safe(c.last_name));
+        setEmail(safe(c.email));
+        setPhoneMobile(safe(c.phone_mobile || c.phone));
+        setPhoneHome(safe(c.phone_home));
 
-  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [id]);
+        setAddress1(safe(c.address_line1));
+        setAddress2(safe(c.address_line2));
+        setCity(safe(c.city));
+        setState(safe(c.state));
+        setPostal(safe(c.postal_code));
+        setCountry(safe(c.country));
 
-  async function handleSave(e) {
+        setWarranty(safe(c.warranty_company));
+        setLeadSource(safe(c.lead_source));
+        setReferredBy(safe(c.referred_by));
+      }catch(e){
+        if(!alive) return;
+        setErr(e?.message || "Failed to load client.");
+      }finally{
+        if(alive) setLoading(false);
+      }
+    })();
+    return ()=>{ alive = false; };
+  },[id]);
+
+  async function onSubmit(e){
     e.preventDefault();
-    try {
-      const r = await fetch(`/api/clients/${id}`, {
-        method: "PUT",
-        headers: authHeaders(true),
-        body: JSON.stringify({ empresa, email, telefono, estado })
-      });
-      if (r.status === 401) return navigate("/login", { replace: true });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      navigate(`/clients/${id}`);
-    } catch (e) {
-      console.error("save error:", e);
-      setErr("No se pudo guardar.");
+    if(!isAdmin){
+      setErr("You don't have permission to edit this client.");
+      return;
+    }
+    setErr("");
+    setSaving(true);
+    try{
+      const payload = {
+        first_name, last_name, email,
+        phone_mobile, phone_home,
+        address_line1, address_line2, city, state, postal_code, country,
+        warranty_company, lead_source, referred_by,
+      };
+      await updateClient(id, payload);
+      nav(`/clients/${id}`, { replace:true });
+    }catch(e){
+      setErr(e?.message || "Failed to update client.");
+    }finally{
+      setSaving(false);
     }
   }
 
-  async function addService(e) {
-    e.preventDefault();
-    if (!svcTitle.trim()) return;
-    const payload = { titulo: svcTitle.trim() };
-    if (svcAmount) payload.monto_total = Number(svcAmount);
-    if (svcStatus) payload.estado = svcStatus;
-
-    try {
-      const r = await fetch(`/api/clients/${id}/services`, {
-        method: "POST",
-        headers: authHeaders(true),
-        body: JSON.stringify(payload)
-      });
-      if (r.status === 401) return navigate("/login", { replace: true });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setSvcTitle(""); setSvcAmount(""); setSvcStatus("pendiente");
-      const numID = client?.id ?? id, uuidID = client?.cliente_id ?? null;
-      await fetchServicesWithFallback(numID, uuidID);
-    } catch (e) {
-      console.error("add service error:", e);
-      alert("No se pudo crear el servicio.");
-    }
-  }
-
-  async function handleUpload(e) {
-    e.preventDefault();
-    const files = fileInputRef.current?.files;
-    if (!files || !files.length) return setUploadMsg("Selecciona uno o más archivos");
-    try {
-      setUploading(true); setUploadMsg("");
-      const fd = new FormData();
-      for (const f of files) fd.append("files", f);
-      const r = await fetch(`/api/clients/${id}/uploads`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd
-      });
-      if (r.status === 401) return navigate("/login", { replace: true });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      const numID = client?.id ?? id, uuidID = client?.cliente_id ?? null;
-      await fetchUploadsWithFallback(numID, uuidID);
-      setUploadMsg("Archivos subidos.");
-    } catch (e) {
-      console.error("upload error:", e);
-      setUploadMsg("Error al subir archivos.");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  if (loading) return <div className="container"><div className="skel" /></div>;
-  if (!client) return <div className="container"><div className="alert error">{err || "Cliente no encontrado"}</div></div>;
+  const fullName = `${first_name} ${last_name}`.trim() || "(no name)";
 
   return (
     <div className="container">
-      <section className="card">
-        <div className="card-head"><h3>Editar cliente</h3></div>
-        <form onSubmit={handleSave} className="form" style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-          <label>Empresa
-            <input value={empresa} onChange={e=>setEmpresa(e.target.value)} />
-          </label>
-          <label>Email
-            <input value={email} onChange={e=>setEmail(e.target.value)} />
-          </label>
-          <label>Teléfono
-            <input value={telefono} onChange={e=>setTelefono(e.target.value)} />
-          </label>
-          <label>Estado
-            <select value={estado} onChange={e=>setEstado(e.target.value)}>
-              <option value="activo">activo</option>
-              <option value="inactivo">inactivo</option>
-            </select>
-          </label>
-          <div style={{gridColumn:'1 / -1', display:'flex', gap:8, marginTop:8}}>
-            <button className="btn" type="submit">Guardar</button>
-            <Link className="btn secondary" to={`/clients/${id}`}>Cancelar</Link>
+      <div className="page-header">
+        <h1>Edit Client #{id}</h1>
+        <div className="spacer" />
+        <Link className="btn" to={`/clients/${id}`}>View</Link>
+        <Link className="btn" to="/clients">← Back</Link>
+      </div>
+
+      {!isAdmin && (
+        <div className="alert">Only administrators can edit client records.</div>
+      )}
+      {err && <div className="alert">{err}</div>}
+
+      {loading ? (
+        <div className="form-card">Loading…</div>
+      ) : (
+        <form className="form-card" onSubmit={onSubmit}>
+          <div className="form-grid">
+            <div className="field">
+              <label>First name</label>
+              <input value={first_name} onChange={e=>setFirstName(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>Last name</label>
+              <input value={last_name} onChange={e=>setLastName(e.target.value)} disabled={!isAdmin} />
+            </div>
+
+            <div className="field">
+              <label>Email</label>
+              <input type="email" value={email} onChange={e=>setEmail(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>Phone (mobile)</label>
+              <input value={phone_mobile} onChange={e=>setPhoneMobile(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>Phone (home)</label>
+              <input value={phone_home} onChange={e=>setPhoneHome(e.target.value)} disabled={!isAdmin} />
+            </div>
+
+            <div className="field" style={{gridColumn:"1 / -1"}}>
+              <label>Address line 1</label>
+              <input value={address_line1} onChange={e=>setAddress1(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field" style={{gridColumn:"1 / -1"}}>
+              <label>Address line 2</label>
+              <input value={address_line2} onChange={e=>setAddress2(e.target.value)} disabled={!isAdmin} />
+            </div>
+
+            <div className="field">
+              <label>City</label>
+              <input value={city} onChange={e=>setCity(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>State</label>
+              <input value={state} onChange={e=>setState(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>Postal code</label>
+              <input value={postal_code} onChange={e=>setPostal(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>Country</label>
+              <input value={country} onChange={e=>setCountry(e.target.value)} disabled={!isAdmin} />
+            </div>
+
+            <div className="field">
+              <label>Warranty company</label>
+              <input value={warranty_company} onChange={e=>setWarranty(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>Lead source</label>
+              <input value={lead_source} onChange={e=>setLeadSource(e.target.value)} disabled={!isAdmin} />
+            </div>
+            <div className="field">
+              <label>Referred by</label>
+              <input value={referred_by} onChange={e=>setReferredBy(e.target.value)} disabled={!isAdmin} />
+            </div>
+
+            <div className="field" style={{gridColumn:"1 / -1"}}>
+              <label>Preview</label>
+              <div className="muted">{fullName}</div>
+            </div>
+          </div>
+
+          <div className="form-actions">
+            <Link className="btn" to={`/clients/${id}`}>Cancel</Link>
+            <button className="btn primary" type="submit" disabled={!isAdmin || saving}>
+              {saving ? "Saving…" : "Save changes"}
+            </button>
           </div>
         </form>
-      </section>
-
-      <section className="card services-card">
-        <div className="card-head"><h3>Servicios</h3></div>
-        <form onSubmit={addService} style={{display:'grid',gridTemplateColumns:'1fr 160px 160px',gap:8,marginBottom:12}}>
-          <input placeholder="Título del servicio" value={svcTitle} onChange={e=>setSvcTitle(e.target.value)} />
-          <input placeholder="Monto total" type="number" step="0.01" value={svcAmount} onChange={e=>setSvcAmount(e.target.value)} />
-          <select value={svcStatus} onChange={e=>setSvcStatus(e.target.value)}>
-            <option value="pendiente">pendiente</option>
-            <option value="completado">completado</option>
-            <option value="cancelado">cancelado</option>
-          </select>
-          <div style={{gridColumn:'1 / -1'}}>
-            <button className="btn" type="submit">Agregar servicio</button>
-          </div>
-        </form>
-
-        {services.length === 0 ? (
-          <div className="empty">No hay servicios.</div>
-        ) : (
-          <div className="table services-table">
-            <div className="tr th"><div>ID</div><div>Título</div><div>Monto</div><div>Estado</div><div>Creado</div></div>
-            {services.map(s => (
-              <div className="tr" key={s.id}>
-                <div>{s.id}</div>
-                <div>{s.titulo || s.service_name || "—"}</div>
-                <div>{s.monto_total != null ? `$${Number(s.monto_total).toFixed(2)}` : "—"}</div>
-                <div>{s.estado || "—"}</div>
-                <div>{s.created_at ? new Date(s.created_at).toLocaleString() : "—"}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="card uploads-card">
-        <div className="card-head"><h3>Fotos</h3></div>
-        <form onSubmit={handleUpload} style={{display:'flex', alignItems:'center', gap:8, marginBottom:12}}>
-          <input type="file" ref={fileInputRef} multiple />
-          <button className="btn" type="submit" disabled={uploading}>{uploading ? "Subiendo..." : "Subir"}</button>
-          {uploadMsg && <span>{uploadMsg}</span>}
-        </form>
-        {uploads.length === 0 ? (
-          <div className="empty">No hay fotos.</div>
-        ) : (
-          <div className="uploads-grid">
-            {uploads.map((u, idx) => {
-              const url = urlFrom(u);
-              if (!url) return null;
-              return (
-                <a key={idx} href={url} target="_blank" rel="noreferrer" className="thumb">
-                  <img src={url} alt={`foto_${idx}`} loading="lazy" />
-                </a>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      )}
     </div>
   );
 }

@@ -1,45 +1,50 @@
-import React, { useState } from "react";
+// src/pages/Login.jsx
+import React, { useEffect, useState } from "react";
+import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { setToken } from "../utils/auth";
 
-export default function Login(){
-  const [email,setEmail] = useState("");
-  const [password,setPassword] = useState("");
-  const [msg,setMsg] = useState("");
-  const nav = useNavigate();
+export default function Login() {
+  const { login, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
 
-  async function submit(e){
+  const [email, setEmail] = useState("admin@totalrepairnow.com");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      // redirige cuando ya hay token (p.ej. después de un login OK)
+      navigate("/clients", { replace: true });
+    }
+  }, [isAuthenticated, navigate]);
+
+  async function onSubmit(e) {
     e.preventDefault();
-    setMsg("");
-    try{
-      const r = await fetch('/api/auth/login', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ email, password })
-      });
-      const data = await r.json().catch(()=>({}));
-      if (!r.ok || !data.token) throw new Error(data.error || 'Credenciales inválidas');
-      setToken(data.token);
-      nav('/', { replace:true });
-    }catch(e){
-      setMsg(e.message || "Error");
+    setErr("");
+    try {
+      const ok = await login(email.trim(), password);
+      if (ok) navigate("/clients", { replace: true });
+    } catch (e2) {
+      setErr(String(e2?.message || "Login failed"));
     }
   }
 
   return (
-    <div className="container" style={{maxWidth:420}}>
-      <h1 className="dash-title" style={{margin:'16px 0'}}>Iniciar sesión</h1>
-      {msg && <div className="alert error">{msg}</div>}
-      <form className="card form" onSubmit={submit}>
-        <div>
-          <label>Email</label>
-          <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required />
+    <div className="container">
+      <h1>Login</h1>
+      {err && (
+        <div style={{ background: "#fce2e2", padding: 12, borderRadius: 6, marginBottom: 12 }}>
+          {err}
         </div>
+      )}
+      <form onSubmit={onSubmit}>
         <div>
-          <label>Contraseña</label>
-          <input type="password" value={password} onChange={e=>setPassword(e.target.value)} required />
+          <label>Email&nbsp;</label>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} />
+          <label style={{ marginLeft: 10 }}>Password&nbsp;</label>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <button type="submit" style={{ marginLeft: 10 }}>Entrar</button>
         </div>
-        <button className="btn" type="submit">Entrar</button>
       </form>
     </div>
   );

@@ -1,0 +1,211 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { apiFetch } from '../lib/api';
+
+export default function Clients() {
+  const nav = useNavigate();
+
+  // UI state
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+
+  // data state
+  const [rows, setRows] = useState([]);
+  const [meta, setMeta] = useState({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1,
+    hasPrev: false,
+    hasNext: false,
+  });
+
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  // ---- debounce de q ----
+  const [debouncedQ, setDebouncedQ] = useState(q);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  // ---- fetch de datos ----
+  async function load(params) {
+    const { q: Q, page: P, limit: L } = params;
+    setLoading(true);
+    try {
+      const url = `/clients?q=${encodeURIComponent(Q || '')}&page=${Number(P || 1)}&limit=${Number(L || 10)}`;
+      const data = await apiFetch(url);
+
+      // Soporta dos formatos:
+      // a) Nuevo: { items: [...], meta:{ page, limit, total, totalPages, hasPrev, hasNext } }
+      // b) Antiguo: [ ... ]  (sin meta) -> adaptamos para que la UI SIEMPRE pinte la paginación
+      if (Array.isArray(data)) {
+        setRows(data);
+        setMeta({
+          page: 1,
+          limit: data.length || L,
+          total: data.length,
+          totalPages: 1,
+          hasPrev: false,
+          hasNext: false,
+        });
+      } else {
+        setRows(data.items || []);
+        const m = data.meta || {};
+        setMeta({
+          page: Number(m.page ?? P ?? 1),
+          limit: Number(m.limit ?? L ?? 10),
+          total: Number(m.total ?? (data.items ? data.items.length : 0)),
+          totalPages: Number(m.totalPages ?? 1),
+          hasPrev: Boolean(m.hasPrev ?? (Number(P || 1) > 1)),
+          hasNext: Boolean(m.hasNext ?? false),
+        });
+      }
+      setErr('');
+    } catch (e) {
+      setErr(e?.message || 'Error loading clients');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // carga cuando cambian q/page/limit (con q debounced)
+  useEffect(() => {
+    load({ q: debouncedQ, page, limit });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ, page, limit]);
+
+  // util para cambiar limit (resetea page=1)
+  function changeLimit(newLimit) {
+    const L = Number(newLimit) || 10;
+    setLimit(L);
+    setPage(1);
+  }
+
+  const haveRows = rows && rows.length > 0;
+
+  const filtered = useMemo(() => {
+    // El filtrado lo hace el servidor; esto es solo por si backend devuelve arreglo plano sin q
+    if (!debouncedQ) return rows;
+    const s = String(debouncedQ).toLowerCase();
+    return rows.filter(c =>
+      [c.first_name, c.last_name, c.email, c.phone]
+        .filter(Boolean)
+        .some(v => String(v).toLowerCase().includes(s))
+    );
+  }, [rows, debouncedQ]);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <h1>Clients</h1>
+        <div className="toolbar-actions">
+          <input
+            className="input"
+            placeholder="Search..."
+            value={q}
+            onChange={e => setQ(e.target.value)}
+          />
+          <select
+            className="input"
+            value={limit}
+            onChange={e => changeLimit(e.target.value)}
+            title="Rows per page"
+          >
+            <option value={5}>5 / page</option>
+            <option value={10}>10 / page</option>
+            <option value={25}>25 / page</option>
+            <option value={50}>50 / page</option>
+          </select>
+          <button className="btn btn-primary" onClick={() => nav('/clients/new')}>
+            New Client
+          </button>
+        </div>
+      </div>
+
+      {err && <div className="alert error">{err}</div>}
+
+      {/* PAGER ARRIBA: SIEMPRE visible (muestra estado aunque solo haya 1 página) */}
+      <div className="pager">
+        <button
+          className="btn"
+          onClick={() => setPage(p => Math.max(1, p - 1))}
+          disabled={!meta.hasPrev}
+        >
+          Prev
+        </button>
+        <span>
+          Page {meta.page} of {meta.totalPages} &mdash; {meta.total} total
+        </span>
+        <button
+          className="btn"
+          onClick={() => setPage(p => p + 1)}
+          disabled={!meta.hasNext}
+        >
+          Next
+        </button>
+      </div>
+
+      <div className="table-wrap">
+        {/* overlay del spinner */}
+        {loading && (
+          <div className="loading-overlay">
+            <div className="spinner" />
+          </div>
+        )}
+
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th><th>Email</th><th>Phone</th><th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(c => {
+              const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)';
+              return (
+                <tr key={c.id}>
+                  <td><Link to={`/clients/${c.id}`}>{name}</Link></td>
+                  <td>{c.email || '-'}</td>
+                  <td>{c.phone || '-'}</td>
+                  <td>{c.created_at ? new Date(c.created_at).toLocaleString() : '-'}</td>
+                </tr>
+              );
+            })}
+            {!haveRows && !loading && (
+              <tr>
+                <td colSpan={4} style={{ textAlign: 'center', color: '#64748b' }}>
+                  No results
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* PAGER ABAJO (opcional). Si no lo quieres, elimina este bloque */}
+      <div className="pager" style={{ justifyContent: 'flex-end' }}>
+        <button
+          className="btn"
+          onClick={() => setPage(p => Math.max(1, p - 1))}
+          disabled={!meta.hasPrev}
+        >
+          Prev
+        </button>
+        <span>
+          Page {meta.page} of {meta.totalPages}
+        </span>
+        <button
+          className="btn"
+          onClick={() => setPage(p => p + 1)}
+          disabled={!meta.hasNext}
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}

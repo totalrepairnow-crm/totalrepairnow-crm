@@ -1,0 +1,133 @@
+// src/pages/ServiceDetail.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  getService,
+  getClient,
+  deleteService,
+  fullName,
+} from "../lib/api";
+
+export default function ServiceDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+
+  const [service, setService] = useState(null);
+  const [client, setClient] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const s = await getService(id);
+        setService(s);
+        if (s.client_id) {
+          getClient(s.client_id).then(setClient).catch(() => {});
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [id]);
+
+  const q = Number(service?.quantity ?? service?.units ?? 0) || 0;
+  const u = Number(service?.unit_cost ?? service?.unit_price ?? 0) || 0;
+  const total = useMemo(() => (q * u).toFixed(2), [q, u]);
+  const wo = service?.wo_number || service?.id;
+
+  async function onDelete() {
+    if (!service?.id) return;
+    if (!confirm("Delete this service?")) return;
+    try {
+      setDeleting(true);
+      await deleteService(service.id);
+      if (service.client_id) navigate(`/clients/${service.client_id}`);
+      else navigate("/services");
+    } catch (err) {
+      alert(err.message || "Delete error");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="page">
+      <div className="toolbar">
+        <h1 className="title">Service {wo ? `• WO #${wo}` : ""}</h1>
+        <div className="actions">
+          {service?.id && (
+            <>
+              <Link className="btn" to={`/services/${service.id}/edit`}>Edit</Link>
+              <button className="btn danger" onClick={onDelete} disabled={deleting}>
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </>
+          )}
+          <Link className="btn" to="/services">Back</Link>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="card"><div className="muted">Loading…</div></div>
+      ) : !service ? (
+        <div className="card"><div className="muted">Not found</div></div>
+      ) : (
+        <div className="card">
+          <div className="grid grid-2">
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <label>Belongs to (Client)</label>
+              <div className="muted">
+                {client ? (
+                  <Link to={`/clients/${client.id}`}>{fullName(client)}</Link>
+                ) : (
+                  service.client_id ? `Client #${service.client_id}` : "-"
+                )}
+              </div>
+            </div>
+
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <label>Title</label>
+              <div>{service.title || service.item_name || "-"}</div>
+            </div>
+
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <label>Description</label>
+              <div className="muted" style={{ whiteSpace: "pre-wrap" }}>
+                {service.description || "-"}
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Quantity</label>
+              <div>{q}</div>
+            </div>
+            <div className="field">
+              <label>Unit cost</label>
+              <div>{u.toFixed(2)}</div>
+            </div>
+            <div className="field">
+              <label>Total</label>
+              <div><strong>{total}</strong></div>
+            </div>
+
+            <div className="field">
+              <label>WO</label>
+              <div>{wo ? `WO #${wo}` : "-"}</div>
+            </div>
+
+            <div className="field">
+              <label>Created</label>
+              <div className="muted">{service.created_at || "-"}</div>
+            </div>
+            <div className="field">
+              <label>Updated</label>
+              <div className="muted">{service.updated_at || "-"}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

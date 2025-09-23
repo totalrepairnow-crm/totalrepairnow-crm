@@ -1,0 +1,70 @@
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+import "./styles.css";
+
+// Core pages
+import Users from "./pages/Users";
+import UserDetail from "./pages/UserDetail";
+import UserEdit from "./pages/UserEdit";
+import UserNew from "./pages/UserNew";
+
+import Clients from "./pages/Clients";
+import ClientDetail from "./pages/ClientDetail";
+import ClientEdit from "./pages/ClientEdit";
+import ClientNew from "./pages/ClientNew";
+
+// Services (ahora sí importados)
+import Services from "./pages/Services";
+import ServiceDetail from "./pages/ServiceDetail";
+import ServiceNew from "./pages/ServiceNew";
+
+// ErrorBoundary
+import RouteErrorBoundary from "./components/RouteErrorBoundary";
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <Routes>
+        {/* Users */}
+        <Route path="/v2/users" element={<Users />} />
+        <Route path="/v2/users/new" element={<UserNew />} />
+        <Route path="/v2/users/:id" element={<UserDetail />} />
+        <Route path="/v2/users/:id/edit" element={<UserEdit />} />
+
+        {/* Clients */}
+        <Route path="/v2/clients" element={<Clients />} />
+        <Route path="/v2/clients/new" element={<ClientNew />} />
+        <Route path="/v2/clients/:id" element={<ClientDetail />} />
+        <Route path="/v2/clients/:id/edit" element={<ClientEdit />} />
+
+        {/* Services envueltos con ErrorBoundary */}
+        <Route
+          path="/v2/services"
+          element={
+            <RouteErrorBoundary>
+              <Services />
+            </RouteErrorBoundary>
+          }
+        />
+        <Route
+          path="/v2/services/new"
+          element={
+            <RouteErrorBoundary>
+              <ServiceNew />
+            </RouteErrorBoundary>
+          }
+        />
+        <Route
+          path="/v2/services/:id"
+          element={
+            <RouteErrorBoundary>
+              <ServiceDetail />
+            </RouteErrorBoundary>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
+  </React.StrictMode>
+);

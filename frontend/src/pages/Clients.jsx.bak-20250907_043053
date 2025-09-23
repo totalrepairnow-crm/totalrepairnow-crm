@@ -1,0 +1,132 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { apiFetch } from '../lib/api'; // usa fetch centralizado con token
+
+export default function Clients() {
+  const nav = useNavigate();
+
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [rows, setRows] = useState([]);
+  const [meta, setMeta] = useState({ page: 1, limit: 10, total: 0, totalPages: 1, hasPrev: false, hasNext: false });
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function load() {
+    setLoading(true);
+    setErr('');
+    try {
+      const data = await apiFetch(`/clients?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}`);
+      // Backend ya devuelve: { items, page, limit, total, totalPages, hasPrev, hasNext, q }
+      const top = data || {};
+      const items = top.items || [];
+      const total = Number(top.total || items.length || 0);
+      const l = Number(top.limit || limit);
+      const p = Number(top.page || page);
+      const totalPages = Math.max(1, Number(top.totalPages || Math.ceil(total / Math.max(l,1))));
+      const hasPrev = Boolean(top.hasPrev ?? (p > 1));
+      const hasNext = Boolean(top.hasNext ?? (p < totalPages));
+
+      setRows(items);
+      setMeta({ page: p, limit: l, total, totalPages, hasPrev, hasNext });
+    } catch (e) {
+      setErr('Failed to load clients');
+      setRows([]);
+      setMeta({ page: 1, limit: 10, total: 0, totalPages: 1, hasPrev: false, hasNext: false });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, page, limit]);
+
+  const changeLimit = (e) => {
+    const v = Number(e.target.value || 10);
+    setLimit(v);
+    setPage(1); // reset a la primera página
+  };
+
+  const filteredCount = useMemo(() => rows.length, [rows]);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <h1>Clients</h1>
+        <div className="toolbar-actions">
+          <input
+            className="input"
+            placeholder="Search..."
+            value={q}
+            onChange={e => { setQ(e.target.value); setPage(1); }}
+          />
+          <select className="input" value={limit} onChange={changeLimit} title="Items per page">
+            <option value={5}>5 / page</option>
+            <option value={10}>10 / page</option>
+            <option value={25}>25 / page</option>
+            <option value={50}>50 / page</option>
+          </select>
+          <button className="btn btn-primary" onClick={() => nav('/clients/new')}>
+            New Client
+          </button>
+        </div>
+      </div>
+
+      {err && <div className="alert error">{err}</div>}
+
+      {/* Paginación superior */}
+      <div className="pager">
+        <button className="btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={!meta.hasPrev}>Prev</button>
+        <span className="muted">Page {meta.page} / {meta.totalPages} • {meta.total} total</span>
+        <button className="btn" onClick={() => setPage(p => p + 1)} disabled={!meta.hasNext}>Next</button>
+      </div>
+
+      <div className="table-wrap" style={{ position:'relative' }}>
+        <table className="table">
+          <thead>
+            <tr>
+              <th style={{width:'28%'}}>Name</th>
+              <th style={{width:'28%'}}>Email</th>
+              <th style={{width:'18%'}}>Phone</th>
+              <th style={{width:'16%'}}>Created</th>
+              <th style={{width:'10%'}}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(c => {
+              const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)';
+              return (
+                <tr key={c.id}>
+                  <td>{name}</td>
+                  <td>{c.email || '-'}</td>
+                  <td>{c.phone || '-'}</td>
+                  <td>{c.created_at ? new Date(c.created_at).toLocaleString() : '-'}</td>
+                  <td className="table-actions">
+                    <button className="btn btn-small" onClick={() => nav(`/clients/${c.id}`)}>View</button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && !loading && (
+              <tr><td colSpan={5} style={{textAlign:'center', color:'#64748b'}}>No results</td></tr>
+            )}
+          </tbody>
+        </table>
+
+        {/* overlay del spinner */}
+        {loading && (
+          <div className="loading-overlay">
+            <div className="spinner" />
+          </div>
+        )}
+      </div>
+
+      {/* Paginación inferior */}
+      <div className="pager" style={{ justifyContent: 'flex-end' }}>
+        <button className="btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={!meta.hasPrev}>Prev</button>
+        <span className="muted">Page {meta.page} / {meta.totalPages} • Showing {filteredCount} of {meta.total}</span>
+        <button className="btn" onClick={() => setPage(p => p + 1)} disabled={!meta.hasNext}>Next</button>
+      </div>
+    </div>
+  );
+}
