@@ -1,0 +1,89 @@
+name: Backend CI/CD (Node API)
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+  push:
+    branches: [ main ]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+
+jobs:
+  build_and_test:
+    name: Lint & Test (no deploy)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      # Si no tienes tests, lo dejamos como noop para validar build
+      - name: Sanity build (noop)
+        run: node -e "console.log('backend ok')"
+
+  deploy_prod:
+    name: Deploy to server & restart service
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    env:
+      BACKEND_DIR: /home/crmadmin/crm_app/backend
+      SERVICE: crm-backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_KEY }}
+
+      - name: Known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -T 10 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          wc -l ~/.ssh/known_hosts
+
+      - name: Rsync backend sources
+        run: |
+          rsync -az --delete \
+            --exclude ".git" \
+            --exclude "node_modules" \
+            backend/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${BACKEND_DIR}/"
+
+      - name: Install prod deps on server
+        run: |
+          ssh -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" '
+            set -euo pipefail
+            cd '"$BACKEND_DIR"' &&
+            npm ci --omit=dev
+          '
+
+      - name: Restart service
+        run: |
+          ssh -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" '
+            sudo systemctl restart '"$SERVICE"' &&
+            sleep 1 &&
+            sudo systemctl status '"$SERVICE"' --no-pager -l | head -n 40
+          '
+
+      - name: Smoke test /api/invoices/health
+        run: |
+          curl -fsS -D - "https://${{ secrets.SSH_HOST }}/api/invoices/health" -o /dev/null \
+          | sed -n "1,12p"
