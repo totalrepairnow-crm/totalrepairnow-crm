@@ -1,23 +1,18 @@
+# .github/workflows/frontend-deploy.yml
 name: Frontend — Build & Deploy
 
 on:
   push:
-    branches: [ "staging" ]
-    paths: [ "frontend/**" ]
-  release:
-    types: [ published ]
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-deploy.yml'
   workflow_dispatch:
     inputs:
       target:
-        description: "Deploy target"
-        required: true
-        default: "staging"
-        type: choice
-        options: [ "staging", "prod" ]
-
-concurrency:
-  group: frontend-deploy
-  cancel-in-progress: true
+        description: 'staging | prod'
+        required: false
+        default: 'staging'
 
 jobs:
   build-deploy:
@@ -27,18 +22,20 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install & Build
         run: |
           npm ci
-          npm run build -- --clearScreen=false
+          CI=false npm run build   # evita que warnings de ESLint rompan el build
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
@@ -46,22 +43,31 @@ jobs:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Add server to known_hosts
+        shell: bash
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          # OJO: guion normal "-", no "—"
+          ssh-keyscan -T 10 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          wc -l ~/.ssh/known_hosts
 
       - name: Choose target dir (staging vs prod)
         id: pick
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ] || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.target }}" = "prod" ]; }; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.target }}" == "prod" ]]; then
             echo "dir=/var/www/crm_frontend/v2" >> "$GITHUB_OUTPUT"
           else
             echo "dir=/var/www/crm_frontend/v2-staging" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Rsync dist → server
+        shell: bash
         run: |
-          rsync -av --delete dist/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ steps.pick.outputs.dir }}/"
+          rsync -avz --delete -e "ssh -o StrictHostKeyChecking=yes" \
+            dist/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ steps.pick.outputs.dir }}/"
 
       - name: Reload Nginx
-        run: ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "sudo systemctl reload nginx"
+        shell: bash
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'sudo nginx -t && sudo systemctl reload nginx'
