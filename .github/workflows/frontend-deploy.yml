@@ -69,5 +69,5 @@ jobs:
       - name: Reload Nginx
         shell: bash
         run: |
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            'sudo nginx -t && sudo systemctl reload nginx'
+          ssh -p "${{ steps.host.outputs.port }}" "${{ secrets.SSH_USER }}@${{ steps.host.outputs.host }}" \
+            'sudo -n /usr/sbin/nginx -t && sudo -n /usr/bin/systemctl reload nginx'
