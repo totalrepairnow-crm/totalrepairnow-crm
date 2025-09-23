@@ -1,0 +1,188 @@
+// src/pages/ClientDetail.jsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { apiFetch, listClientServices, createServiceForClient } from '../lib/api';
+
+function StatusBadge({ status }) {
+  const txt = (status || '').toLowerCase();
+  const map = {
+    open: '#0ea5e9',
+    in_progress: '#f59e0b',
+    completed: '#22c55e',
+    cancelled: '#ef4444'
+  };
+  const bg = map[txt] || '#94a3b8';
+  return (
+    <span style={{
+      background: bg, color: 'white', padding: '2px 8px',
+      borderRadius: 999, fontSize: 12, textTransform: 'capitalize'
+    }}>{txt || 'n/a'}</span>
+  );
+}
+
+function formatMoney(v) {
+  if (v == null) return '-';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return `$${n.toFixed(2)}`;
+}
+
+export default function ClientDetail() {
+  const { id } = useParams();
+  const nav = useNavigate();
+
+  const [client, setClient] = useState(null);
+  const [loadingClient, setLoadingClient] = useState(true);
+  const [errClient, setErrClient] = useState('');
+
+  // Filtros de servicios
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState('all');
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [loadingSvc, setLoadingSvc] = useState(false);
+  const [errSvc, setErrSvc] = useState('');
+  const [data, setData] = useState({ page: 1, limit: 10, total: 0, totalPages: 1, hasPrev: false, hasNext: false, items: [] });
+
+  // Cargar cliente
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoadingClient(true); setErrClient('');
+      try {
+        // usa API directa para no depender de otros helpers
+        const c = await apiFetch(`/clients/${id}`);
+        if (!cancelled) setClient(c);
+      } catch (e) {
+        if (!cancelled) setErrClient(e.message || 'Error cargando cliente');
+      } finally {
+        if (!cancelled) setLoadingClient(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  // Cargar servicios del cliente
+  async function fetchServices(p = page) {
+    setLoadingSvc(true); setErrSvc('');
+    try {
+      const resp = await listClientServices(id, { q, status, page: p, limit, sort: '-created_at' });
+      setData(resp);
+      setPage(resp.page);
+    } catch (e) {
+      setErrSvc(e.message || 'Error cargando servicios');
+    } finally {
+      setLoadingSvc(false);
+    }
+  }
+  useEffect(() => { fetchServices(1); /* reset page al cambiar filtros */ }, [id, q, status, limit]);
+
+  const goNewService = () => {
+    // Pasamos client_id en query para precargar el form
+    nav(`/services/new?client_id=${id}`);
+  };
+
+  const wo = (n) => `WO-${String(n).padStart(5, '0')}`;
+
+  return (
+    <div className="page">
+      <div className="header">
+        <h1>Cliente #{id}</h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={() => nav('/clients')}>← Back</button>
+          <button className="btn primary" onClick={goNewService}>+ Nuevo servicio</button>
+        </div>
+      </div>
+
+      {loadingClient && <div className="alert">Cargando cliente…</div>}
+      {errClient && <div className="alert">{errClient}</div>}
+
+      {client && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-body">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div><strong>Nombre:</strong> {client.name || client.full_name || '-'}</div>
+              <div><strong>Email:</strong> {client.email || '-'}</div>
+              <div><strong>Teléfono:</strong> {client.phone || '-'}</div>
+              <div><strong>Creado:</strong> {client.created_at ? new Date(client.created_at).toLocaleString() : '-'}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <h2 style={{ marginTop: 8 }}>Servicios del cliente</h2>
+
+      <div className="toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <input
+          className="input"
+          placeholder="Buscar (nombre o descripción)…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ minWidth: 260 }}
+        />
+        <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="all">Todos los estados</option>
+          <option value="open">Open</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <select className="input" value={String(limit)} onChange={(e) => setLimit(parseInt(e.target.value, 10))}>
+          <option value="5">5 / página</option>
+          <option value="10">10 / página</option>
+          <option value="25">25 / página</option>
+        </select>
+        <button className="btn" disabled={loadingSvc} onClick={() => fetchServices(1)}>Aplicar</button>
+      </div>
+
+      {errSvc && <div className="alert">{errSvc}</div>}
+
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>WO</th>
+              <th>Servicio</th>
+              <th>Cant.</th>
+              <th>Precio</th>
+              <th>Total</th>
+              <th>Status</th>
+              <th>Creado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loadingSvc && (
+              <tr><td colSpan={8} style={{ textAlign: 'center' }}>Cargando…</td></tr>
+            )}
+            {!loadingSvc && data.items.map(s => (
+              <tr key={s.id}>
+                <td><Link to={`/services/${s.id}`}>{wo(s.id)}</Link></td>
+                <td>{s.service_name}</td>
+                <td>{s.quantity}</td>
+                <td>{formatMoney(s.unit_price)}</td>
+                <td><strong>{formatMoney(s.total)}</strong></td>
+                <td><StatusBadge status={s.status} /></td>
+                <td>{s.created_at ? new Date(s.created_at).toLocaleString() : '-'}</td>
+                <td>
+                  <Link className="btn" to={`/services/${s.id}`}>Ver</Link>
+                </td>
+              </tr>
+            ))}
+            {!loadingSvc && !data.items.length && (
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: '#94a3b8' }}>Sin resultados</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="pager">
+        <button className="btn" disabled={!data.hasPrev || loadingSvc} onClick={() => fetchServices(data.page - 1)}>◀ Prev</button>
+        <span style={{ opacity: .8 }}>Página {data.page} / {data.totalPages}</span>
+        <button className="btn" disabled={!data.hasNext || loadingSvc} onClick={() => fetchServices(data.page + 1)}>Next ▶</button>
+      </div>
+    </div>
+  );
+}
+

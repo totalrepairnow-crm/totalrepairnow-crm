@@ -1,0 +1,100 @@
+// src/lib/api.js — wrapper único y exports consistentes
+
+const LS_KEY = 'crm_access_token';
+
+export function getToken() {
+  try { return localStorage.getItem(LS_KEY) || ''; } catch { return ''; }
+}
+export function setToken(t) {
+  try { localStorage.setItem(LS_KEY, t || ''); } catch {}
+}
+export function clearToken() {
+  try { localStorage.removeItem(LS_KEY); } catch {}
+}
+
+// Derivar role del JWT sin librerías
+export function getRole() {
+  const t = getToken();
+  if (!t || !t.includes('.')) return 'user';
+  try {
+    const payload = JSON.parse(atob(t.split('.')[1]));
+    return payload?.role || 'user';
+  } catch {
+    return 'user';
+  }
+}
+
+// Fetch con inyección de Authorization y manejo simple de 401
+export async function apiFetch(path, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (!headers.has('Content-Type') && opts.body && typeof opts.body === 'string') {
+    headers.set('Content-Type', 'application/json');
+  }
+  const res = await fetch(path, { ...opts, headers });
+  if (res.status === 401) {
+    // token inválido → limpiar y redirigir al login (SPA maneja)
+    clearToken();
+  }
+  return res;
+}
+
+// --------- Auth & Dashboard
+export async function login(email, password) {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json(); // { accessToken | token }
+  const token = data.accessToken || data.token || '';
+  if (!token) throw new Error('No token in response');
+  setToken(token);
+  return { token };
+}
+
+export async function getDashboard() {
+  const res = await apiFetch('/api/dashboard');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json(); // { totals, series } | {status:'ok'}
+}
+
+// --------- Clients
+export async function listClients(params = {}) {
+  const qs = new URLSearchParams();
+  if (params.q != null) qs.set('q', String(params.q));
+  if (params.page != null) qs.set('page', String(params.page));
+  if (params.limit != null) qs.set('limit', String(params.limit));
+  if (params.sort != null) qs.set('sort', String(params.sort));
+  if (params.dir != null) qs.set('dir', String(params.dir));
+  const url = `/api/clients${qs.toString() ? `?${qs.toString()}` : ''}`;
+  const res = await apiFetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json(); // { items, page, ... } o []
+}
+
+export async function getClient(id) {
+  const res = await apiFetch(`/api/clients/${id}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function createClient(payload) {
+  const res = await apiFetch('/api/clients', {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify(payload || {})
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// --------- Users
+export async function listUsers(params = {}) {
+  // (si luego agregamos paginación/ordenamiento en /api/users, aquí añadimos QS)
+  const res = await apiFetch('/api/users');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json(); // []
+}

@@ -1,0 +1,174 @@
+// src/pages/ServiceEdit.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { getService, updateService, isAdminFromToken } from "../lib/api";
+
+function money(n) {
+  const v = Number(n) || 0;
+  return v.toFixed(2);
+}
+
+export default function ServiceEdit() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const isAdmin = isAdminFromToken();
+
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  // Campos del servicio (1 registro)
+  const [title, setTitle] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [unit_price, setUnitPrice] = useState(0);
+  const [status, setStatus] = useState("open");
+  const [client_id, setClientId] = useState("");
+
+  const total = useMemo(() => (Number(quantity) || 0) * (Number(unit_price) || 0), [quantity, unit_price]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const s = await getService(id);
+        if (!mounted) return;
+        setTitle(s?.title || "");
+        setQuantity(s?.quantity ?? 1);
+        setUnitPrice(s?.unit_price ?? 0);
+        setStatus(s?.status || "open");
+        setClientId(s?.client_id ?? "");
+      } catch (e) {
+        if (mounted) setError(e?.message || "Failed to load service");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [id]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+
+    if (!isAdmin) {
+      setError("Only admins can update services.");
+      return;
+    }
+    const payload = {
+      title: String(title || "").trim(),
+      quantity: Number(quantity) || 0,
+      unit_price: Number(unit_price) || 0,
+      total: (Number(quantity) || 0) * (Number(unit_price) || 0),
+      status,
+    };
+    if (!payload.title || payload.quantity <= 0) {
+      setError("Description and quantity are required.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+      const upd = await updateService(id, payload);
+      if (upd?.id) navigate(`/services/${id}`);
+      else navigate("/services");
+    } catch (e) {
+      setError(e?.message || "Failed to update service");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const cancelHref = `/services/${id}`;
+
+  return (
+    <div className="container">
+      <div className="page-header">
+        <h1>Edit Service #{id}</h1>
+        <div className="spacer" />
+        <Link className="btn" to={cancelHref}>← Back</Link>
+      </div>
+
+      {error && <div className="alert error">{error}</div>}
+
+      <div className="card">
+        <div className="card-body">
+          {loading ? (
+            <div className="muted">Loading…</div>
+          ) : (
+            <form onSubmit={handleSubmit}>
+              {/* Tabla con 1 fila: Service | Qty | Price | Total */}
+              <div style={{ overflowX: "auto" }}>
+                <table className="table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Service</th>
+                      <th style={{ width: 90 }}>Qty</th>
+                      <th style={{ width: 120 }}>Unit Price</th>
+                      <th style={{ width: 120 }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <input
+                          placeholder="e.g. Water heater"
+                          value={title}
+                          onChange={(e) => setTitle(e.target.value)}
+                          disabled={!isAdmin}
+                          style={{ width: "100%" }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={quantity}
+                          onChange={(e) => setQuantity(e.target.value)}
+                          disabled={!isAdmin}
+                          style={{ width: "100%" }}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={unit_price}
+                          onChange={(e) => setUnitPrice(e.target.value)}
+                          disabled={!isAdmin}
+                          style={{ width: "100%" }}
+                        />
+                      </td>
+                      <td>
+                        <input value={money(total)} readOnly style={{ width: "100%" }} />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="field" style={{ maxWidth: 240 }}>
+                <label>Status</label>
+                <select value={status} onChange={(e) => setStatus(e.target.value)} disabled={!isAdmin}>
+                  <option value="open">open</option>
+                  <option value="scheduled">scheduled</option>
+                  <option value="in_progress">in_progress</option>
+                  <option value="done">done</option>
+                  <option value="canceled">canceled</option>
+                </select>
+              </div>
+
+              <div className="form-actions">
+                <Link className="btn" to={cancelHref}>Cancel</Link>
+                <button className="btn primary" type="submit" disabled={!isAdmin || saving}>
+                  {saving ? "Saving…" : "Save changes"}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

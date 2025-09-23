@@ -1,0 +1,220 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { getToken } from '../lib/api';
+
+export default function Clients() {
+  const nav = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // --- Estado derivado de la URL (con defaults y clamps)
+  const urlPage  = Number.parseInt(searchParams.get('page')  || '1', 10);
+  const urlLimit = Number.parseInt(searchParams.get('limit') || '10', 10);
+  const urlQ     = searchParams.get('q') || '';
+
+  const page  = Number.isFinite(urlPage)  && urlPage  > 0 ? urlPage  : 1;
+  const limit = Number.isFinite(urlLimit) && urlLimit > 0 ? urlLimit : 10;
+  const q     = urlQ;
+
+  // Mantener el input de búsqueda sincronizado con la URL
+  const [qInput, setQInput] = useState(q);
+  useEffect(() => { setQInput(q); }, [q]);
+
+  // Si falta alguno de los params básicos, completa (sin empujar historial)
+  useEffect(() => {
+    const needFix = (!searchParams.get('page')) || (!searchParams.get('limit'));
+    if (needFix) {
+      const next = new URLSearchParams(searchParams);
+      if (!next.get('page'))  next.set('page', String(page));
+      if (!next.get('limit')) next.set('limit', String(limit));
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // una sola vez
+
+  // --- Data
+  const [rows, setRows] = useState([]);
+  const [meta, setMeta] = useState({
+    page: 1, limit: 10, total: 0, totalPages: 1, hasPrev: false, hasNext: false,
+  });
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  // --- Fetch cuando cambian q/page/limit en la URL
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      setLoading(true);
+      setErr('');
+      try {
+        const token = getToken();
+        const qs = new URLSearchParams({
+          q,
+          page: String(page),
+          limit: String(limit),
+        });
+        const res = await fetch(`/api/clients?${qs.toString()}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        //  a) Nuevo: { items, page, limit, total, totalPages, hasPrev, hasNext }
+        //  b) Viejo: [ ... ]
+        if (Array.isArray(data)) {
+          if (!cancelled) {
+            setRows(data);
+            setMeta({
+              page,
+              limit,
+              total: data.length,
+              totalPages: 1,
+              hasPrev: false,
+              hasNext: false,
+            });
+          }
+        } else {
+          const top = data || {};
+          const items = top.items || [];
+          const total = Number(top.total ?? items.length) || 0;
+          const totalPages = Number(top.totalPages ?? Math.max(1, Math.ceil(total / limit)));
+          const hasPrev = Boolean(top.hasPrev ?? (page > 1));
+          const hasNext = Boolean(top.hasNext ?? (page < totalPages));
+          if (!cancelled) {
+            setRows(items);
+            setMeta({ page, limit, total, totalPages, hasPrev, hasNext });
+          }
+        }
+      } catch (e) {
+        if (!cancelled) setErr('Failed to load clients');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => { cancelled = true; };
+  }, [q, page, limit]); // se recalcula por URL
+
+  // --- Handlers que escriben a la URL
+  const changeLimit = (newLimit) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('limit', String(newLimit));
+    next.set('page', '1'); // reset page
+    setSearchParams(next); // push (para que se pueda volver)
+  };
+
+  const goPrev = () => {
+    if (!meta.hasPrev) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('page', String(Math.max(1, page - 1)));
+    setSearchParams(next);
+  };
+
+  const goNext = () => {
+    if (!meta.hasNext) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('page', String(page + 1));
+    setSearchParams(next);
+  };
+
+  // Debounce de búsqueda -> actualiza URL y resetea page=1
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (qInput === q) return; // nada que hacer
+      const next = new URLSearchParams(searchParams);
+      next.set('q', qInput);
+      next.set('page', '1');
+      setSearchParams(next);
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qInput]); // sólo cuando el usuario teclea
+
+  // Derivados para texto
+  const showingFrom = useMemo(() => (meta.total === 0 ? 0 : (meta.page - 1) * meta.limit + 1), [meta]);
+  const showingTo   = useMemo(() => Math.min(meta.page * meta.limit, meta.total), [meta]);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <h1>Clients</h1>
+        <div className="toolbar-actions">
+          <input
+            className="input"
+            placeholder="Search..."
+            value={qInput}
+            onChange={e => setQInput(e.target.value)}
+          />
+          <select
+            className="input"
+            value={meta.limit}
+            onChange={e => changeLimit(Number(e.target.value))}
+            title="Results per page"
+          >
+            <option value={5}>5 / page</option>
+            <option value={10}>10 / page</option>
+            <option value={25}>25 / page</option>
+            <option value={50}>50 / page</option>
+          </select>
+          <button className="btn btn-primary" onClick={() => nav('/clients/new')}>
+            New Client
+          </button>
+        </div>
+      </div>
+
+      {err && <div className="alert error">{err}</div>}
+
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th><th>Email</th><th>Phone</th><th>Created</th><th style={{textAlign:'right'}}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(c => {
+              const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)';
+              return (
+                <tr key={c.id}>
+                  <td>{name}</td>
+                  <td>{c.email || '-'}</td>
+                  <td>{c.phone || '-'}</td>
+                  <td>{c.created_at ? new Date(c.created_at).toLocaleString() : '-'}</td>
+                  <td style={{textAlign:'right'}}>
+                    <Link className="btn" to={`/clients/${c.id}`}>View</Link>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && (
+              <tr><td colSpan={5} style={{textAlign:'center', color:'#64748b'}}>No results</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Paginador (arriba) */}
+      <div className="pager">
+        <button className="btn" onClick={goPrev} disabled={!meta.hasPrev}>Prev</button>
+        <div className="pager-info">
+          {meta.total > 0
+            ? <>Showing {showingFrom}-{showingTo} of {meta.total} (page {meta.page} / {meta.totalPages})</>
+            : <>No results</>}
+        </div>
+        <button className="btn" onClick={goNext} disabled={!meta.hasNext}>Next</button>
+      </div>
+
+      {/* overlay del spinner */}
+      {loading && (
+        <div className="loading-overlay">
+          <div className="spinner" />
+        </div>
+      )}
+
+      {/* Paginador (abajo) */}
+      <div className="pager" style={{ justifyContent: 'flex-end' }}>
+        <button className="btn" onClick={goPrev} disabled={!meta.hasPrev}>Prev</button>
+        <button className="btn" onClick={goNext} disabled={!meta.hasNext}>Next</button>
+      </div>
+    </div>
+  );
+}

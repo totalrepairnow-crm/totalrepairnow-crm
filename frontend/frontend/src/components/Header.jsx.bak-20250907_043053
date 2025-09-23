@@ -1,0 +1,45 @@
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { getToken, clearToken } from "../lib/api";
+
+export default function Header(){
+  const loc = useLocation();
+  const nav = useNavigate();
+  const authed = !!getToken();
+
+  const isActive = (path) => loc.pathname.startsWith(path);
+
+  const doLogout = () => {
+    clearToken();
+    nav("/login", { replace: true });
+  };
+
+  return (
+    <header className="header">
+      <div className="header-inner">
+        <Link to="/dashboard" className="brand" title="Home">
+          <img
+            src="/v2/logo.png"
+            alt="Total Repair Now"
+            onError={(e)=>{ e.currentTarget.style.display='none'; }}
+          />
+          <span>TRN CRM</span>
+        </Link>
+
+        {authed && (
+          <nav className="nav">
+            <Link className={isActive("/dashboard") ? "active" : ""} to="/dashboard">Dashboard</Link>
+            <Link className={isActive("/clients") ? "active" : ""} to="/clients">Clients</Link>
+            <Link className={isActive("/users") ? "active" : ""} to="/users">Users</Link>
+          </nav>
+        )}
+
+        <div className="spacer" />
+        {authed ? (
+          <button className="btn" onClick={doLogout}>Logout</button>
+        ) : (
+          <Link className="btn" to="/login">Login</Link>
+        )}
+      </div>
+    </header>
+  );
+}

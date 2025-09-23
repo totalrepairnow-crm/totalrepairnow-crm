@@ -1,0 +1,293 @@
+// src/pages/ServiceNew.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { listClients, createService, isAdminFromToken } from "../lib/api";
+
+function displayClientName(c = {}) {
+  const name = [c.first_name, c.last_name].filter(Boolean).join(" ").trim();
+  return name || c.company || c.email || `#${c.id}`;
+}
+
+function money(n) {
+  const v = Number(n) || 0;
+  return v.toFixed(2);
+}
+
+export default function ServiceNew() {
+  const navigate = useNavigate();
+  const { id: clientIdFromRoute } = useParams();
+  const [sp] = useSearchParams();
+
+  // bloquear cliente si viene en la URL
+  const initialClientId = clientIdFromRoute || sp.get("client_id") || "";
+  const clientLocked = !!initialClientId;
+
+  const [clients, setClients] = useState([]);
+  const [loadingClients, setLoadingClients] = useState(true);
+
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const [client_id, setClientId] = useState(String(initialClientId || ""));
+  const [discount, setDiscount] = useState(0); // monto en dinero
+
+  // Líneas (cada línea generará 1 servicio en el backend)
+  const [rows, setRows] = useState([
+    { description: "Water heater", quantity: 1, unit_price: 0 },
+  ]);
+
+  const isAdmin = isAdminFromToken();
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const resp = await listClients({ page: 1, limit: 1000 });
+        if (mounted) setClients(resp?.items || []);
+      } catch (e) {
+        if (mounted) setError(e?.message || "Failed to load clients");
+      } finally {
+        if (mounted) setLoadingClients(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  // Cálculos
+  const lineTotals = useMemo(
+    () => rows.map(r => (Number(r.quantity) || 0) * (Number(r.unit_price) || 0)),
+    [rows]
+  );
+
+  const subTotal = useMemo(
+    () => lineTotals.reduce((a, b) => a + b, 0),
+    [lineTotals]
+  );
+
+  const grandTotal = useMemo(
+    () => Math.max(0, subTotal - (Number(discount) || 0)),
+    [subTotal, discount]
+  );
+
+  // helpers UI
+  function updateRow(idx, field, value) {
+    setRows(prev =>
+      prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r))
+    );
+  }
+  function addRow() {
+    setRows(prev => [...prev, { description: "", quantity: 1, unit_price: 0 }]);
+  }
+  function removeRow(idx) {
+    setRows(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+
+    if (!isAdmin) {
+      setError("Only admins can create services.");
+      return;
+    }
+    if (!client_id) {
+      setError("Please select a client.");
+      return;
+    }
+
+    // Validación estricta para evitar "Missing required fields"
+    const cleanRows = rows
+      .map(r => ({
+        description: String(r.description || "").trim(),
+        quantity: Number(r.quantity) || 0,
+        unit_price: Number(r.unit_price) || 0,
+      }))
+      // quitar filas vacías
+      .filter(r => r.description && r.quantity > 0);
+
+    if (cleanRows.length === 0) {
+      setError("Please add at least one service line with description and quantity > 0.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      // 1 POST por fila para NO tocar el backend actual (cada fila = 1 servicio)
+      const tasks = cleanRows.map(r =>
+        createService({
+          client_id: Number(client_id),
+          title: r.description,               // backend espera title
+          quantity: r.quantity,
+          unit_price: r.unit_price,
+          total: r.quantity * r.unit_price,   // evita '* unknown' en SQL
+          status: "open",                     // opcional
+        })
+      );
+
+      const results = await Promise.allSettled(tasks);
+      const fails = results.filter(r => r.status === "rejected");
+
+      if (fails.length > 0) {
+        const msg = fails.map(f => f.reason?.message || "Error creating line").join(" | ");
+        throw new Error(msg);
+      }
+
+      // Éxito: volvemos a la ficha del cliente para ver todas las WO
+      navigate(`/clients/${client_id}`);
+    } catch (e) {
+      setError(e?.message || "Failed to create services");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const cancelHref = clientLocked && client_id ? `/clients/${client_id}` : "/services";
+
+  return (
+    <div className="container">
+      <div className="page-header">
+        <h1>New Work Order</h1>
+        <div className="spacer" />
+        <Link className="btn" to={cancelHref}>← Back</Link>
+      </div>
+
+      {error && <div className="alert error">{error}</div>}
+
+      <div className="card">
+        <div className="card-body">
+          <form onSubmit={handleSubmit}>
+
+            {/* Selección de cliente */}
+            <div className="field" style={{ marginBottom: 16 }}>
+              <label>Client *</label>
+              <select
+                required
+                value={client_id}
+                onChange={(e) => setClientId(e.target.value)}
+                disabled={clientLocked || !isAdmin || loadingClients}
+              >
+                <option value="">— Select client —</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {displayClientName(c)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Tabla tipo ClientDetail: Service | Qty | Price | Total | (Acción) */}
+            <div style={{ overflowX: "auto" }}>
+              <table className="table" style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>Service</th>
+                    <th style={{ width: 90 }}>Qty</th>
+                    <th style={{ width: 120 }}>Unit Price</th>
+                    <th style={{ width: 120 }}>Total</th>
+                    <th style={{ width: 60 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, idx) => {
+                    const totalLine = (Number(r.quantity) || 0) * (Number(r.unit_price) || 0);
+                    return (
+                      <tr key={idx}>
+                        <td>
+                          <input
+                            placeholder="e.g. Water heater"
+                            value={r.description}
+                            onChange={(e) => updateRow(idx, "description", e.target.value)}
+                            disabled={!isAdmin}
+                            style={{ width: "100%" }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={r.quantity}
+                            onChange={(e) => updateRow(idx, "quantity", e.target.value)}
+                            disabled={!isAdmin}
+                            style={{ width: "100%" }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={r.unit_price}
+                            onChange={(e) => updateRow(idx, "unit_price", e.target.value)}
+                            disabled={!isAdmin}
+                            style={{ width: "100%" }}
+                          />
+                        </td>
+                        <td>
+                          <input value={money(totalLine)} readOnly style={{ width: "100%" }} />
+                        </td>
+                        <td style={{ textAlign: "center" }}>
+                          {rows.length > 1 && (
+                            <button
+                              type="button"
+                              className="btn"
+                              onClick={() => removeRow(idx)}
+                              disabled={!isAdmin}
+                              title="Remove line"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <button type="button" className="btn" onClick={addRow} disabled={!isAdmin}>
+                + Add service line
+              </button>
+            </div>
+
+            {/* Totales */}
+            <div className="card" style={{ marginTop: 16 }}>
+              <div className="card-body" style={{ maxWidth: 420, marginLeft: "auto" }}>
+                <div className="field">
+                  <label>Subtotal</label>
+                  <input readOnly value={money(subTotal)} />
+                </div>
+                <div className="field">
+                  <label>Discount (amount)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    disabled={!isAdmin}
+                  />
+                </div>
+                <div className="field">
+                  <label>Grand total</label>
+                  <input readOnly value={money(grandTotal)} />
+                </div>
+              </div>
+            </div>
+
+            <div className="form-actions" style={{ marginTop: 16 }}>
+              <Link className="btn" to={cancelHref}>Cancel</Link>
+              <button className="btn primary" type="submit" disabled={!isAdmin || saving}>
+                {saving ? "Creating…" : "Create Work Order"}
+              </button>
+            </div>
+
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
