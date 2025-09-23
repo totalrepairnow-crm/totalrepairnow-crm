@@ -1,174 +1,345 @@
 // /home/crmadmin/crm_app/backend/routes/invoices.js
+'use strict';
+
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const db = require('../db'); // usa el pool existente
+const pool = require('../db');
+const { streamInvoicePdf, renderInvoicePdfBuffer } = require('../lib/pdfkit-invoice');
+const { sendInvoiceEmail } = require('../lib/mailer');
 
-// --- Utils ---
-function toNumber(x, def = 0) {
-  if (x === null || x === undefined) return def;
+// ---------- Helpers ----------
+const num = (x, d = 0) => {
   const n = Number(x);
-  return Number.isFinite(n) ? n : def;
-}
+  return Number.isFinite(n) ? n : d;
+};
+const ensureArray = (a) => (Array.isArray(a) ? a : a == null ? [] : [a]);
+const sanitizeIds = (arr) =>
+  ensureArray(arr).map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0);
 
-// Construye el payload para invoice-generator.com
-async function buildPayload(invoiceId) {
-  // 1) Carga factura
-  const invSQL = `
-    SELECT id, invoice_no, client_id, currency, subtotal, discount, tax, total, status, created_at
-    FROM invoices
-    WHERE id = $1
-  `;
-  const invRes = await db.query(invSQL, [invoiceId]);
-  if (!invRes.rows.length) {
-    const err = new Error('Invoice not found');
-    err.code = 'NOT_FOUND';
-    throw err;
+function normalizeItems(rawItems) {
+  const items = [];
+  for (const it of ensureArray(rawItems)) {
+    if (!it) continue;
+    const q = num(it.quantity, 1);
+    const p = num(it.unit_price, 0);
+    const desc = String(it.description || '').trim() || (it.service_id ? `Service #${it.service_id}` : 'Service');
+    const sid = it.service_id ? Number(it.service_id) : null;
+    items.push({ service_id: sid, description: desc, quantity: q, unit_price: p });
   }
-  const inv = invRes.rows[0];
-
-  // 2) Cliente (sin address)
-  const cliSQL = `SELECT id, name, email, phone FROM clients WHERE id = $1`;
-  const cliRes = await db.query(cliSQL, [inv.client_id]);
-  const cli = cliRes.rows[0] || { name: 'Client' };
-
-  // 3) Líneas
-  const linesSQL = `
-    SELECT id, invoice_id, service_id, description, quantity, unit_price, line_total
-    FROM invoice_lines
-    WHERE invoice_id = $1
-    ORDER BY id
-  `;
-  const linesRes = await db.query(linesSQL, [invoiceId]);
-  const lines = linesRes.rows || [];
-
-  // 4) Arma destinatario "to"
-  const toParts = [cli.name];
-  if (cli.email) toParts.push(cli.email);
-  if (cli.phone) toParts.push(cli.phone);
-  const toField = toParts.join('\n');
-
-  // 5) Items para invoice-generator
-  const items = lines.map(l => ({
-    name: l.description || 'Service',
-    quantity: toNumber(l.quantity, 0),
-    unit_cost: toNumber(l.unit_price, 0)
-  }));
-
-  // 6) Campos numéricos que entiende el proveedor
-  const tax = toNumber(inv.tax, 0);
-  const discounts = toNumber(inv.discount, 0);
-
-  // 7) Payload mínimo válido
-  const payload = {
-    from: 'Total Repair Now\nCRM',
-    to: toField || 'Client',
-    number: String(inv.invoice_no || invoiceId),
-    currency: inv.currency || 'USD',
-    items,
-    tax,
-    discounts,
-    fields: {
-      tax: 'Tax',
-      discounts: 'Discount'
-    }
-  };
-
-  return { payload, invoice: inv, client: cli, lines };
+  return items;
 }
 
-// --- Rutas ---
+async function nextInvoiceNo(client) {
+  // Usa secuencia si existe:
+  try {
+    const { rows } = await client.query('SELECT nextval(\'invoice_no_seq\') AS seq');
+    return String(rows[0].seq);
+  } catch (_) {
+    // Fallback simple YYYYMMDDHHmmss
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return [
+      d.getFullYear(),
+      pad(d.getMonth() + 1),
+      pad(d.getDate()),
+      pad(d.getHours()),
+      pad(d.getMinutes()),
+      pad(d.getSeconds()),
+    ].join('');
+  }
+}
 
-// Health
+async function buildInvoicePayload(invoiceId) {
+  const { rows: invRows } = await pool.query(
+    `SELECT i.*, c.name AS client_name,
+            NULLIF(TRIM(c.email),'') AS client_email,
+            NULLIF(TRIM(c.phone),'') AS client_phone
+       FROM invoices i
+  LEFT JOIN clients c ON c.id = i.client_id
+      WHERE i.id = $1`,
+    [invoiceId]
+  );
+  if (invRows.length === 0) return null;
+  const inv = invRows[0];
+
+  const { rows: lines } = await pool.query(
+    `SELECT id, service_id, description, quantity, unit_price, line_total
+       FROM invoice_lines
+      WHERE invoice_id = $1
+   ORDER BY id ASC`,
+    [invoiceId]
+  );
+
+  const toParts = [];
+  if (inv.client_name) toParts.push(inv.client_name);
+  if (inv.client_email) toParts.push(inv.client_email);
+  if (inv.client_phone) toParts.push(inv.client_phone);
+
+  return {
+    from: (process.env.BRAND_NAME || 'Total Repair Now') + '\n' + (process.env.BRAND_TAGLINE || 'CRM'),
+    to: `\n${toParts.join('\n')}`,
+    number: inv.invoice_no,
+    currency: inv.currency || 'USD',
+    items: lines.map((ln) => ({
+      name: ln.description || (ln.service_id ? `Service #${ln.service_id}` : 'Service'),
+      quantity: num(ln.quantity, 1),
+      unit_cost: num(ln.unit_price, 0),
+    })),
+    tax: num(inv.tax, 0),             // %
+    discounts: num(inv.discount, 0),  // monto
+    fields: { tax: 'Tax', discounts: 'Discount' },
+    meta: { invoice_date: inv.created_at }
+  };
+}
+
+// ---------- Routes ----------
 router.get('/health', (_req, res) => res.json({ ok: true }));
 
-// GET /api/invoices/:id  -> detalle + líneas
+/**
+ * POST /invoices/draft
+ * Acepta:
+ *  - { client_id, service_ids:[...] , discount, tax, currency }
+ *  - { items:[{service_id?, description, quantity, unit_price}, ...], discount, tax, currency }
+ */
+router.post('/draft', async (req, res) => {
+  try {
+    const { client_id, service_ids, items: rawItems, discount = 0, tax = 0, currency = 'USD' } = req.body || {};
+
+    let items = [];
+    if (rawItems && Array.isArray(rawItems) && rawItems.length) {
+      items = normalizeItems(rawItems);
+    } else {
+      const cid = Number(client_id);
+      const ids = sanitizeIds(service_ids);
+      if (!cid || ids.length === 0) {
+        return res.status(400).json({ error: 'client_id/service_ids or items[] are required' });
+      }
+
+      const { rows } = await pool.query(
+        `SELECT id, client_id,
+                COALESCE(description, service_name) AS description,
+                COALESCE(quantity,1) AS quantity,
+                COALESCE(unit_price,0) AS unit_price,
+                status
+           FROM services
+          WHERE id = ANY($1) AND client_id = $2`,
+        [ids, cid]
+      );
+
+      // Filtra facturables (ajusta lista si quieres)
+      const fact = rows.filter((r) => !r.status || ['pending','approved','ready','done','scheduled'].includes(String(r.status).toLowerCase()));
+      if (fact.length === 0) return res.status(400).json({ error: 'No billable services' });
+
+      items = fact.map((r) => ({
+        service_id: r.id,
+        description: r.description || `Service #${r.id}`,
+        quantity: num(r.quantity, 1),
+        unit_price: num(r.unit_price, 0),
+      }));
+    }
+
+    const subtotal = items.reduce((a, it) => a + num(it.quantity, 1) * num(it.unit_price, 0), 0);
+    const disc = num(discount, 0);
+    const taxPct = num(tax, 0);
+    const base = Math.max(0, subtotal - disc);
+    const taxAmt = base * (taxPct / 100);
+    const total = base + taxAmt;
+
+    return res.json({
+      currency,
+      subtotal,
+      discount: disc,
+      tax: taxPct,
+      tax_amount: Number(taxAmt.toFixed(2)),
+      total: Number(total.toFixed(2)),
+      items_count: items.length,
+    });
+  } catch (e) {
+    console.error('draft error:', e);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+/**
+ * POST /invoices/create
+ * Igual que draft, pero inserta:
+ *  - invoices (subtotal, discount, tax, total, currency, status)
+ *  - invoice_lines (invoice_id, service_id, description, quantity, unit_price)
+ *  **NO** se inserta line_total (lo calcula la DB por ser columna generada)
+ */
+router.post('/create', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { client_id, service_ids, items: rawItems, discount = 0, tax = 0, currency = 'USD' } = req.body || {};
+
+    let items = [];
+    if (rawItems && Array.isArray(rawItems) && rawItems.length) {
+      items = normalizeItems(rawItems);
+    } else {
+      const cid = Number(client_id);
+      const ids = sanitizeIds(service_ids);
+      if (!cid || ids.length === 0) {
+        return res.status(400).json({ error: 'client_id/service_ids or items[] are required' });
+      }
+
+      const { rows } = await client.query(
+        `SELECT id, client_id,
+                COALESCE(description, service_name) AS description,
+                COALESCE(quantity,1) AS quantity,
+                COALESCE(unit_price,0) AS unit_price,
+                status
+           FROM services
+          WHERE id = ANY($1) AND client_id = $2
+       ORDER BY id ASC`,
+        [ids, cid]
+      );
+      if (rows.length === 0) return res.status(404).json({ error: 'Services not found for that client' });
+
+      const fact = rows.filter((r) => !r.status || ['pending','approved','ready','done','scheduled'].includes(String(r.status).toLowerCase()));
+      if (fact.length === 0) return res.status(400).json({ error: 'No billable services' });
+
+      items = fact.map((r) => ({
+        service_id: r.id,
+        description: r.description || `Service #${r.id}`,
+        quantity: num(r.quantity, 1),
+        unit_price: num(r.unit_price, 0),
+      }));
+    }
+
+    // Totales
+    const subtotal = items.reduce((a, it) => a + num(it.quantity, 1) * num(it.unit_price, 0), 0);
+    const disc = num(discount, 0);
+    const taxPct = num(tax, 0);
+    const base = Math.max(0, subtotal - disc);
+    const taxAmt = base * (taxPct / 100);
+    const total = base + taxAmt;
+
+    await client.query('BEGIN');
+
+    const invoice_no = await nextInvoiceNo(client);
+
+    const { rows: invRows } = await client.query(
+      `INSERT INTO invoices (invoice_no, client_id, currency, subtotal, discount, tax, total, status, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'created', NOW())
+       RETURNING id, invoice_no`,
+      [invoice_no, client_id || null, currency, subtotal, disc, taxPct, total]
+    );
+    const invId = invRows[0].id;
+
+    // ------ INSERT invoice_lines ------
+    // IMPORTANT: NO ponemos "line_total" (columna generada)
+    if (items.length) {
+      const cols = ['invoice_id', 'service_id', 'description', 'quantity', 'unit_price'];
+      const values = [];
+      const params = [];
+      let p = 1;
+
+      for (const it of items) {
+        values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+        params.push(
+          invId,
+          it.service_id || null,
+          it.description || (it.service_id ? `Service #${it.service_id}` : 'Service'),
+          num(it.quantity, 1),
+          num(it.unit_price, 0)
+        );
+      }
+
+      await client.query(
+        `INSERT INTO invoice_lines (${cols.join(',')})
+         VALUES ${values.join(',')}`,
+        params
+      );
+    }
+
+    await client.query('COMMIT');
+    return res.json({ id: invId, invoice_no });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('create error:', e);
+    return res.status(500).json({ error: 'Internal error' });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /invoices/:id
 router.get('/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
-    const invSQL = `
-      SELECT id, invoice_no, client_id, currency, subtotal, discount, tax, total, status, created_at
-      FROM invoices
-      WHERE id = $1
-    `;
-    const invRes = await db.query(invSQL, [id]);
-    if (!invRes.rows.length) return res.status(404).json({ error: 'Not found' });
-    const inv = invRes.rows[0];
+    const { rows: inv } = await pool.query(`SELECT * FROM invoices WHERE id = $1`, [id]);
+    if (inv.length === 0) return res.status(404).json({ error: 'Not found' });
 
-    const linesSQL = `
-      SELECT id, invoice_id, service_id, description, quantity, unit_price, line_total
-      FROM invoice_lines
-      WHERE invoice_id = $1
-      ORDER BY id
-    `;
-    const linesRes = await db.query(linesSQL, [id]);
+    const { rows: lines } = await pool.query(
+      `SELECT id, service_id, description, quantity, unit_price, line_total
+         FROM invoice_lines
+        WHERE invoice_id = $1
+     ORDER BY id ASC`,
+      [id]
+    );
 
-    res.json({ ...inv, lines: linesRes.rows || [] });
-  } catch (err) {
-    console.error('GET /invoices/:id ERROR:', err);
+    res.json({ ...inv[0], lines });
+  } catch (e) {
+    console.error('get invoice error:', e);
     res.status(500).json({ error: 'Internal error' });
   }
 });
 
-// GET /api/invoices/:id/pdf[?debug=1][&upstream=1]
+// GET /invoices/:id/pdf  (soporta ?debug=1 & ?download=1)
 router.get('/:id/pdf', async (req, res) => {
-  const id = Number(req.params.id);
-  const debug = String(req.query.debug || '') === '1';
-  const forceUpstream = String(req.query.upstream || '') === '1';
-
   try {
-    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
-    const { payload, invoice } = await buildPayload(id);
+    const payload = await buildInvoicePayload(id);
+    if (!payload) return res.status(404).json({ error: 'Not found' });
 
-    // Modo debug: NO llama al proveedor, solo muestra el JSON que enviaríamos.
-    if (debug) return res.json({ payload });
-
-    // Llamada real al proveedor (o si se fuerza con upstream=1)
-    const API_KEY = process.env.INVOICEGEN_API_KEY || '';
-    if (!API_KEY) {
-      console.error('invoices.pdf ERROR: Missing INVOICEGEN_API_KEY');
-      return res.status(500).json({ error: 'Internal error generating PDF' });
+    if (String(req.query.debug || '') === '1') {
+      return res.json({ payload });
     }
 
-    const upstreamURL = 'https://invoice-generator.com';
-    const r = await axios.post(upstreamURL, payload, {
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/pdf'
-      },
-      responseType: 'arraybuffer',
-      timeout: 15000
+    const disposition = String(req.query.download || '') === '1' ? 'attachment' : 'inline';
+    res.setHeader('X-Invoice-Engine', 'internal');
+    if (!res.getHeader('Content-Disposition')) {
+      const fname = `Invoice-${payload.number || id}.pdf`;
+      res.setHeader('Content-Disposition', `${disposition}; filename="${fname}"`);
+    }
+    return streamInvoicePdf(payload, res, { disposition }); // tu helper existente
+  } catch (e) {
+    console.error('pdf error:', e);
+    res.status(500).json({ error: 'PDF generation failed' });
+  }
+});
+
+// POST /invoices/:id/email  {to, subject?, message?}
+router.post('/:id/email', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+    const { to, cc, subject, message } = req.body || {};
+    if (!to) return res.status(400).json({ error: '"to" is required' });
+
+    const payload = await buildInvoicePayload(id);
+    if (!payload) return res.status(404).json({ error: 'Not found' });
+
+    const pdfBuffer = await renderInvoicePdfBuffer(payload); // tu helper existente
+    const filename = `Invoice-${payload.number || id}.pdf`;
+
+    const resp = await sendInvoiceEmail({
+      to,
+      cc,
+      subject: subject || `Invoice ${payload.number || id}`,
+      message: message || 'Please find your invoice attached.',
+      pdfBuffer,
+      filename,
     });
 
-    if (r.status !== 200 || !r.data) {
-      console.error('invoices.pdf upstream not OK:', r.status, r.data?.toString?.());
-      return res.status(502).json({ error: 'Upstream PDF error' });
-    }
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="Invoice-${invoice.invoice_no || id}.pdf"`);
-    res.setHeader('Cache-Control', 'no-store');
-    return res.send(Buffer.from(r.data));
-  } catch (err) {
-    // Si el proveedor devolvió JSON de error, intentalo exponer en logs
-    if (err.response) {
-      const status = err.response.status;
-      const detail = Buffer.isBuffer(err.response.data)
-        ? err.response.data.toString('utf8')
-        : (typeof err.response.data === 'object'
-            ? JSON.stringify(err.response.data)
-            : String(err.response.data || ''));
-
-      console.error('GET /invoices/:id/pdf UPSTREAM ERROR:', status, detail);
-      return res.status(500).json({ error: 'Internal error generating PDF' });
-    }
-
-    console.error('GET /invoices/:id/pdf ERROR:', err);
-    res.status(500).json({ error: 'Internal error generating PDF' });
+    return res.json({ ok: true, engine: resp.engine, status: resp.respCode || resp.messageId || 200 });
+  } catch (e) {
+    console.error('email invoice error:', e);
+    res.status(500).json({ error: 'Email send failed' });
   }
 });
 
