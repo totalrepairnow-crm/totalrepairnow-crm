@@ -1,71 +1,56 @@
-// cypress/e2e/smoke.api.cy.js
-
-function norm(v, fallback) {
-  if (v === undefined || v === null) return fallback;
-  const s = String(v).trim();
-  if (s === '' || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') return fallback;
-  return s;
-}
-
-function buildUrl(path = '') {
-  const baseUrl  = norm(Cypress.env('BASE_URL'),  'https://crm.totalrepairnow.com').replace(/\/+$/, '');
-  const basePath = norm(Cypress.env('BASE_PATH'), 'api').replace(/^\/+|\/+$/g, '');
-  const rest     = String(path || '').replace(/^\/+/, '');
-  const url      = basePath ? `${baseUrl}/${basePath}/${rest}` : `${baseUrl}/${rest}`;
-  cy.log(`ENV BASE_URL=${baseUrl} BASE_PATH=${basePath} → ${url}`);
-  return url;
-}
-
+// crm_tests/cypress/e2e/smoke.api.cy.js
 describe('CRM API — Smoke', () => {
   let token;
   let clientId;
 
+  const email = Cypress.env('ADMIN_USER') || 'admin@totalrepairnow.com';
+  const pass  = Cypress.env('ADMIN_PASS') || 'Alfa12345.';
+
   it('health (invoices/health) responde 200', () => {
     cy.request({
       method: 'GET',
-      url: buildUrl('invoices/health'),
+      url: '/api/invoices/health',
       failOnStatusCode: false,
     }).then((res) => {
-      expect([200, 204]).to.include(res.status);
-      expect(res.body).to.satisfy((b) => typeof b === 'object' || b === undefined);
+      expect(res.status).to.eq(200);
+      expect(res.body).to.have.property('ok', true);
     });
   });
 
-  it('login ok', () => {
-    const email = norm(Cypress.env('ADMIN_USER'), 'admin@totalrepairnow.com');
-    const password = norm(Cypress.env('ADMIN_PASS'), 'Alfa12345.');
-
+  it('login OK (email/password)', () => {
     cy.request({
       method: 'POST',
-      url: buildUrl('login'),
-      body: { email, password }, // el backend normaliza email/username
+      url: '/api/login',
+      body: { email, password: pass },
       failOnStatusCode: false,
     }).then((res) => {
-      expect(res.status).to.be.oneOf([200, 201]);
-      const t = res.body?.token || res.body?.data?.token;
-      expect(t, 'jwt token').to.be.a('string').and.have.length.greaterThan(10);
-      token = t;
+      expect(res.status).to.eq(200);
+      expect(res.body).to.have.any.keys('accessToken', 'token');
+      token = res.body.accessToken || res.body.token;
+      expect(token).to.be.a('string').and.not.empty;
     });
   });
 
   it('lista clientes y toma uno', () => {
     cy.request({
       method: 'GET',
-      url: buildUrl('clients'),
+      url: '/api/clients',
       headers: { Authorization: `Bearer ${token}` },
       failOnStatusCode: false,
     }).then((res) => {
       expect(res.status).to.eq(200);
-      expect(res.body).to.be.an('array').and.not.empty;
-      clientId = res.body[0].id;
-      expect(clientId).to.be.a('number');
+      // El backend puede devolver array o paginado {items:[]}
+      const items = Array.isArray(res.body) ? res.body : (res.body.items || []);
+      expect(items.length, 'cantidad de clientes').to.be.greaterThan(0);
+      clientId = items[0].id;
+      expect(clientId, 'first client id').to.be.a('number');
     });
   });
 
-  it('lista servicios del cliente', () => {
+  it('lista servicios (autenticado)', () => {
     cy.request({
       method: 'GET',
-      url: buildUrl(`clients/${clientId}/services`),
+      url: `/api/clients/${clientId}/services`,
       headers: { Authorization: `Bearer ${token}` },
       failOnStatusCode: false,
     }).then((res) => {
@@ -74,27 +59,29 @@ describe('CRM API — Smoke', () => {
     });
   });
 
-  // (opcional) crear servicio y re-listar
-  // it('crea servicio y aparece al listar', () => {
-  //   const payload = { service_name: 'Initial Review', status: 'open' };
-  //   cy.request({
-  //     method: 'POST',
-  //     url: buildUrl(`clients/${clientId}/services`),
-  //     headers: { Authorization: `Bearer ${token}` },
-  //     body: payload,
-  //     failOnStatusCode: false,
-  //   }).then((res) => {
-  //     expect(res.status).to.be.oneOf([200, 201]);
-  //     return cy.request({
-  //       method: 'GET',
-  //       url: buildUrl(`clients/${clientId}/services`),
-  //       headers: { Authorization: `Bearer ${token}` },
-  //       failOnStatusCode: false,
-  //     });
-  //   }).then((res2) => {
-  //     expect(res2.status).to.eq(200);
-  //     const names = (res2.body || []).map((s) => s.service_name);
-  //     expect(names).to.include('Initial Review');
-  //   });
-  // });
+  it('crea servicio y luego aparece en el listado', () => {
+    const payload = { service_name: 'Initial Review', status: 'open' };
+
+    cy.request({
+      method: 'POST',
+      url: `/api/clients/${clientId}/services`,
+      headers: { Authorization: `Bearer ${token}` },
+      body: payload,
+      failOnStatusCode: false,
+    }).then((res) => {
+      // algunos backends devuelven 201, otros 200 — aceptamos ambos
+      expect([200, 201]).to.include(res.status);
+      expect(res.body).to.have.property('id');
+      return cy.request({
+        method: 'GET',
+        url: `/api/clients/${clientId}/services`,
+        headers: { Authorization: `Bearer ${token}` },
+        failOnStatusCode: false,
+      });
+    }).then((res2) => {
+      expect(res2.status).to.eq(200);
+      const names = (res2.body || []).map(s => s.service_name);
+      expect(names).to.include('Initial Review');
+    });
+  });
 });
