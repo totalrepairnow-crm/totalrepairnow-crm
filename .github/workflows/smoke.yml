@@ -1,30 +1,48 @@
+name: Smoke API (Cypress)
+
+on:
+  # Lánzalo a mano desde la pestaña Actions
+  workflow_dispatch:
+  # También cuando haya push a main y cambios en pruebas o en este workflow
+  push:
+    branches: [ main ]
+    paths:
+      - "crm_tests/cypress/**"
+      - ".github/workflows/smoke.yml"
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
-
-    # 👇👇 AÑADE ESTO (mapea tus secrets a env con prefijo CYPRESS_)
     env:
-      CYPRESS_BASE_URL:  ${{ secrets.CYPRESS_BASE_URL }}   # https://crm.totalrepairnow.com
-      CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}  # api
-      CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}  # admin@totalrepairnow.com
-      CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}  # Alfa12345.
-
+      CYPRESS_BASE_URL:  ${{ secrets.CYPRESS_BASE_URL }}
+      CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}
+      CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
+      CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
+    defaults:
+      run:
+        working-directory: crm_tests/cypress
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # (opcional) paso de debug para ver que llegaron
-      - name: Debug CYPRESS env
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: crm_tests/cypress/package-lock.json
+
+      - name: Debug env
         run: |
-          echo "CYPRESS_BASE_URL=$CYPRESS_BASE_URL"
-          echo "CYPRESS_BASE_PATH=$CYPRESS_BASE_PATH"
-          test -n "$CYPRESS_BASE_URL"
-          test -n "$CYPRESS_BASE_PATH"
+          echo "CYPRESS_BASE_URL=${CYPRESS_BASE_URL}"
+          echo "CYPRESS_BASE_PATH=${CYPRESS_BASE_PATH}"
 
-      # tu instalación/ejecución actual de Cypress…
-      - name: Install
+      - name: Install deps
         run: npm ci
-        working-directory: crm_tests/cypress   # <-- ajusta si aplica
 
       - name: Run smoke
-        run: npx cypress run --spec "cypress/e2e/smoke.api.cy.js"
-        working-directory: crm_tests/cypress   # <-- ajusta si aplica
+        run: npx cypress run --browser electron --spec "cypress/e2e/smoke.api.cy.js"
