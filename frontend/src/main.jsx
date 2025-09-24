@@ -7,7 +7,7 @@ import Login from "./pages/Login";
 import Clients from "./pages/Clients";
 import Services from "./pages/Services";
 import ServiceDetail from "./pages/ServiceDetail";
-import NavBar from "./components/NavBar";
+import NavBar from "./components/NavBar";   // ✅ usamos NavBar
 import "./index.css";
 
 // Detecta base para /v2-staging y /v2
@@ -39,10 +39,38 @@ createRoot(document.getElementById("root")).render(
       <BrowserRouter basename={basename}>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={<Private><WithNav><Clients /></WithNav></Private>} />
-          <Route path="/clients" element={<Private><WithNav><Clients /></WithNav></Private>} />
-          <Route path="/services" element={<Private><WithNav><Services /></WithNav></Private>} />
-          <Route path="/services/:id" element={<Private><WithNav><ServiceDetail /></WithNav></Private>} />
+          <Route
+            path="/"
+            element={
+              <Private>
+                <WithNav><Clients /></WithNav>
+              </Private>
+            }
+          />
+          <Route
+            path="/clients"
+            element={
+              <Private>
+                <WithNav><Clients /></WithNav>
+              </Private>
+            }
+          />
+          <Route
+            path="/services"
+            element={
+              <Private>
+                <WithNav><Services /></WithNav>
+              </Private>
+            }
+          />
+          <Route
+            path="/services/:id"
+            element={
+              <Private>
+                <WithNav><ServiceDetail /></WithNav>
+              </Private>
+            }
+          />
           <Route path="*" element={<Navigate to="/clients" replace />} />
         </Routes>
       </BrowserRouter>
