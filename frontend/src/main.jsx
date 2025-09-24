@@ -1,16 +1,12 @@
-// frontend/src/main.jsx
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./context/AuthContext";
-
 import Login from "./pages/Login";
 import Clients from "./pages/Clients";
 import Services from "./pages/Services";
 import ServiceDetail from "./pages/ServiceDetail";
-import Invoices from "./pages/Invoices"; // ⬅️ NUEVO
-
 import NavBar from "./components/NavBar";
 import "./index.css";
 
@@ -42,64 +38,11 @@ createRoot(document.getElementById("root")).render(
     <AuthProvider>
       <BrowserRouter basename={basename}>
         <Routes>
-          {/* Público */}
           <Route path="/login" element={<Login />} />
-
-          {/* Privado */}
-          <Route
-            path="/"
-            element={
-              <Private>
-                <WithNav>
-                  <Clients />
-                </WithNav>
-              </Private>
-            }
-          />
-          <Route
-            path="/clients"
-            element={
-              <Private>
-                <WithNav>
-                  <Clients />
-                </WithNav>
-              </Private>
-            }
-          />
-          <Route
-            path="/services"
-            element={
-              <Private>
-                <WithNav>
-                  <Services />
-                </WithNav>
-              </Private>
-            }
-          />
-          <Route
-            path="/services/:id"
-            element={
-              <Private>
-                <WithNav>
-                  <ServiceDetail />
-                </WithNav>
-              </Private>
-            }
-          />
-
-          {/* ⬇️ NUEVO: página de facturas */}
-          <Route
-            path="/invoices"
-            element={
-              <Private>
-                <WithNav>
-                  <Invoices />
-                </WithNav>
-              </Private>
-            }
-          />
-
-          {/* Catch-all */}
+          <Route path="/" element={<Private><WithNav><Clients /></WithNav></Private>} />
+          <Route path="/clients" element={<Private><WithNav><Clients /></WithNav></Private>} />
+          <Route path="/services" element={<Private><WithNav><Services /></WithNav></Private>} />
+          <Route path="/services/:id" element={<Private><WithNav><ServiceDetail /></WithNav></Private>} />
           <Route path="*" element={<Navigate to="/clients" replace />} />
         </Routes>
       </BrowserRouter>
