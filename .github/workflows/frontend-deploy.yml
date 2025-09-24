@@ -2,22 +2,29 @@ name: Frontend — Build & Deploy
 
 on:
   push:
-    branches: [ "staging" ]
-    paths: [ "frontend/**" ]
-  release:
-    types: [ published ]
+    branches: [staging, main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-deploy.yml'
   workflow_dispatch:
     inputs:
       target:
-        description: "Deploy target"
-        required: true
-        default: "staging"
+        description: 'Deploy target'
+        required: false
+        default: 'staging'
         type: choice
-        options: [ "staging", "prod" ]
+        options: [staging, prod]
+
+env:
+  STAGING_DIR: /var/www/crm_frontend/v2-staging
+  PROD_DIR: /var/www/crm_frontend/v2
 
 concurrency:
-  group: frontend-deploy
+  group: frontend-deploy-${{ github.ref_name }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build-deploy:
@@ -27,41 +34,93 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: '20'
+          cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install & Build
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (Vite)
+        run: npm run build
+        env:
+          # Evita que warnings se traten como errores en CI
+          CI: 'false'
+
+      - name: Show build output
+        run: ls -lah dist
+
+      - name: Parse SSH host[:port]
+        id: host
+        shell: bash
         run: |
-          npm ci
-          npm run build -- --clearScreen=false
+          raw="${{ secrets.SSH_HOST }}"
+          if [[ -z "$raw" ]]; then
+            echo "SSH_HOST secret is empty" >&2; exit 1
+          fi
+          if [[ "$raw" == *:* ]]; then
+            host="${raw%:*}"
+            port="${raw##*:}"
+          else
+            host="$raw"
+            port=""
+          fi
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "port=$port" >> "$GITHUB_OUTPUT"
+          echo "Using host=$host port=${port:-<default 22>}"
 
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Add server to known_hosts
+      - name: Setup SSH key
+        shell: bash
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_ed25519
 
-      - name: Choose target dir (staging vs prod)
-        id: pick
+      - name: Add server to known_hosts
+        shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "release" ] || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.target }}" = "prod" ]; }; then
-            echo "dir=/var/www/crm_frontend/v2" >> "$GITHUB_OUTPUT"
-          else
-            echo "dir=/var/www/crm_frontend/v2-staging" >> "$GITHUB_OUTPUT"
+          ssh-keyscan -T 10 -H "${{ steps.host.outputs.host }}" >> ~/.ssh/known_hosts
+          wc -l ~/.ssh/known_hosts
+
+      - name: Choose deploy dir
+        id: pick
+        shell: bash
+        run: |
+          dir="${{ env.STAGING_DIR }}"
+          # Push a main => prod
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "main" ]]; then
+            dir="${{ env.PROD_DIR }}"
           fi
+          # workflow_dispatch con input prod => prod
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.target }}" == "prod" ]]; then
+            dir="${{ env.PROD_DIR }}"
+          fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "Deploy dir: $dir"
 
       - name: Rsync dist → server
+        shell: bash
         run: |
-          rsync -av --delete dist/ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ steps.pick.outputs.dir }}/"
+          HOST="${{ steps.host.outputs.host }}"
+          PORT="${{ steps.host.outputs.port }}"
+          USER="${{ secrets.SSH_USER }}"
+          if [[ -n "$PORT" ]]; then SSH_P="-p $PORT"; else SSH_P=""; fi
+          rsync -av --delete ./dist/ -e "ssh $SSH_P -o StrictHostKeyChecking=yes" "$USER@$HOST:${{ steps.pick.outputs.dir }}/"
 
       - name: Reload Nginx
-        run: ssh "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" "sudo systemctl reload nginx"
+        shell: bash
+        run: |
+          HOST="${{ steps.host.outputs.host }}"
+          PORT="${{ steps.host.outputs.port }}"
+          USER="${{ secrets.SSH_USER }}"
+          if [[ -n "$PORT" ]]; then SSH_P="-p $PORT"; else SSH_P=""; fi
+          ssh $SSH_P "$USER@$HOST" 'sudo -n /usr/sbin/nginx -t && sudo -n /usr/bin/systemctl reload nginx'
