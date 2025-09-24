@@ -1,44 +1,30 @@
-name: Smoke API (Cypress)
-
-on:
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
-
 jobs:
   smoke:
     runs-on: ubuntu-latest
+
+    # 👇👇 AÑADE ESTO (mapea tus secrets a env con prefijo CYPRESS_)
+    env:
+      CYPRESS_BASE_URL:  ${{ secrets.CYPRESS_BASE_URL }}   # https://crm.totalrepairnow.com
+      CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}  # api
+      CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}  # admin@totalrepairnow.com
+      CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}  # Alfa12345.
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-          cache: npm
-          cache-dependency-path: tests/smoke/package-lock.json
+      # (opcional) paso de debug para ver que llegaron
+      - name: Debug CYPRESS env
+        run: |
+          echo "CYPRESS_BASE_URL=$CYPRESS_BASE_URL"
+          echo "CYPRESS_BASE_PATH=$CYPRESS_BASE_PATH"
+          test -n "$CYPRESS_BASE_URL"
+          test -n "$CYPRESS_BASE_PATH"
 
-      - name: Install dependencies (Cypress project)
-        working-directory: tests/smoke
+      # tu instalación/ejecución actual de Cypress…
+      - name: Install
         run: npm ci
+        working-directory: crm_tests/cypress   # <-- ajusta si aplica
 
-      - name: Verify Cypress
-        working-directory: tests/smoke
-        run: npx cypress verify
-
-      - name: Run smoke against prod
-        working-directory: tests/smoke
-        env:
-          CYPRESS_BASE_URL: ${{ vars.CYPRESS_BASE_URL }}
-          CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
-          CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
-        run: npx cypress run --headless
-
-      - name: Store screenshots on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cypress-screenshots
-          path: tests/smoke/cypress/screenshots
-          if-no-files-found: ignore
+      - name: Run smoke
+        run: npx cypress run --spec "cypress/e2e/smoke.api.cy.js"
+        working-directory: crm_tests/cypress   # <-- ajusta si aplica
