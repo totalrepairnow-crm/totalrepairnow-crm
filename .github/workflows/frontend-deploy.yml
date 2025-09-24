@@ -1,18 +1,23 @@
 name: Frontend — Build & Deploy
 
 on:
-  push:
-    branches: [staging, main]
+  pull_request:
+    branches: [ main ]
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-deploy.yml'
+      - "frontend/**"
+      - ".github/workflows/frontend-deploy.yml"
+  push:
+    branches: [ staging, main ]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-deploy.yml"
   workflow_dispatch:
     inputs:
       target:
-        description: 'Deploy target'
-        required: false
-        default: 'staging'
+        description: "Deploy target"
         type: choice
+        required: false
+        default: staging
         options: [staging, prod]
 
 env:
@@ -27,12 +32,35 @@ permissions:
   contents: read
 
 jobs:
-  build-deploy:
+  # ✅ Job para PRs (branch protection)
+  lint_build:
+    name: Frontend — Lint & Build
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # Evitamos que warnings tumben el build en CI
+      - run: npm run build -- --clearScreen=false
+        env:
+          CI: "false"
 
+  # 🚀 Deploy (push/dispatch)
+  deploy:
+    name: Frontend — Build & Deploy
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,8 +68,8 @@ jobs:
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 20
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
@@ -50,8 +78,7 @@ jobs:
       - name: Build (Vite)
         run: npm run build
         env:
-          # Evita que warnings se traten como errores en CI
-          CI: 'false'
+          CI: "false"
 
       - name: Show build output
         run: ls -lah dist
@@ -62,7 +89,8 @@ jobs:
         run: |
           raw="${{ secrets.SSH_HOST }}"
           if [[ -z "$raw" ]]; then
-            echo "SSH_HOST secret is empty" >&2; exit 1
+            echo "SSH_HOST secret is empty" >&2
+            exit 1
           fi
           if [[ "$raw" == *:* ]]; then
             host="${raw%:*}"
@@ -100,7 +128,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "push" && "${{ github.ref_name }}" == "main" ]]; then
             dir="${{ env.PROD_DIR }}"
           fi
-          # workflow_dispatch con input prod => prod
+          # Dispatch con input prod => prod
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.target }}" == "prod" ]]; then
             dir="${{ env.PROD_DIR }}"
           fi
@@ -114,7 +142,8 @@ jobs:
           PORT="${{ steps.host.outputs.port }}"
           USER="${{ secrets.SSH_USER }}"
           if [[ -n "$PORT" ]]; then SSH_P="-p $PORT"; else SSH_P=""; fi
-          rsync -av --delete ./dist/ -e "ssh $SSH_P -o StrictHostKeyChecking=yes" "$USER@$HOST:${{ steps.pick.outputs.dir }}/"
+          rsync -av --delete ./dist/ -e "ssh $SSH_P -o StrictHostKeyChecking=yes" \
+            "$USER@$HOST:${{ steps.pick.outputs.dir }}/"
 
       - name: Reload Nginx
         shell: bash
