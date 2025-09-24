@@ -1,16 +1,13 @@
-// frontend/src/main.jsx
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import { AuthProvider, useAuth } from "./context/AuthContext";
-
 import Login from "./pages/Login";
 import Clients from "./pages/Clients";
 import Services from "./pages/Services";
 import ServiceDetail from "./pages/ServiceDetail";
-
-import Header from "./components/Header";   // <- NUEVO
+import NavBar from "./components/NavBar";   // ✅ usamos NavBar
 import "./index.css";
 
 // Detecta base para /v2-staging y /v2
@@ -27,10 +24,10 @@ function Private({ children }) {
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
 
-function WithHeader({ children }) {
+function WithNav({ children }) {
   return (
     <>
-      <Header />
+      <NavBar />
       <div className="container">{children}</div>
     </>
   );
@@ -46,7 +43,7 @@ createRoot(document.getElementById("root")).render(
             path="/"
             element={
               <Private>
-                <WithHeader><Clients /></WithHeader>
+                <WithNav><Clients /></WithNav>
               </Private>
             }
           />
@@ -54,7 +51,7 @@ createRoot(document.getElementById("root")).render(
             path="/clients"
             element={
               <Private>
-                <WithHeader><Clients /></WithHeader>
+                <WithNav><Clients /></WithNav>
               </Private>
             }
           />
@@ -62,7 +59,7 @@ createRoot(document.getElementById("root")).render(
             path="/services"
             element={
               <Private>
-                <WithHeader><Services /></WithHeader>
+                <WithNav><Services /></WithNav>
               </Private>
             }
           />
@@ -70,7 +67,7 @@ createRoot(document.getElementById("root")).render(
             path="/services/:id"
             element={
               <Private>
-                <WithHeader><ServiceDetail /></WithHeader>
+                <WithNav><ServiceDetail /></WithNav>
               </Private>
             }
           />
