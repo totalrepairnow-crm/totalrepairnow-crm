@@ -1,0 +1,78 @@
+name: Cypress API Smoke
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "crm_tests/**"
+      - ".github/workflows/cypress-smoke.yml"
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "crm_tests/**"
+      - ".github/workflows/cypress-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Run API Smoke (Cypress)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crm_tests/cypress
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps (if package.json exists)
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+          else
+            echo "No package.json in crm_tests/cypress (OK). Using npx."
+          fi
+
+      - name: Show layout
+        run: |
+          pwd && ls -la
+          [ -f cypress.config.js ] || (echo "Missing cypress.config.js" && exit 1)
+
+      - name: Run Cypress (headless)
+        env:
+          TERM: xterm-256color
+          CYPRESS_BASE_URL: ${{ secrets.CYPRESS_BASE_URL }}
+          CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}
+          CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
+          CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
+        run: |
+          if [ -f package.json ]; then
+            npx cypress run --browser chrome --headless
+          else
+            npx --yes cypress@13.17.0 run --browser chrome --headless --config-file cypress.config.js
+          fi
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: crm_tests/cypress/cypress/screenshots
+          if-no-files-found: ignore
+
+      - name: Upload videos on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos
+          path: crm_tests/cypress/cypress/videos
+          if-no-files-found: ignore

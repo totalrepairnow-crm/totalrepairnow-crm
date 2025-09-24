@@ -11,7 +11,7 @@ function joinUrl(a = '', b = '') {
 }
 
 const BASE_URL  = process.env.CYPRESS_BASE_URL  || 'https://crm.totalrepairnow.com';
-const BASE_PATH = process.env.CYPRESS_BASE_PATH || ''; // ej: "/v2" o vacío
+const BASE_PATH = process.env.CYPRESS_BASE_PATH || ''; // p.ej. "/v2" o vacío
 const COMPUTED  = joinUrl(BASE_URL, BASE_PATH);
 
 module.exports = defineConfig({
