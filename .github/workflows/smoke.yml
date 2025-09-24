@@ -1,30 +1,34 @@
 name: Smoke API (Cypress)
 
 on:
-  # Lánzalo a mano desde la pestaña Actions
-  workflow_dispatch:
-  # También cuando haya push a main y cambios en pruebas o en este workflow
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "crm_tests/**"
+      - "backend/**"
+      - ".github/workflows/smoke.yml"
   push:
     branches: [ main ]
     paths:
-      - "crm_tests/cypress/**"
+      - "crm_tests/**"
+      - "backend/**"
       - ".github/workflows/smoke.yml"
-
-concurrency:
-  group: smoke-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crm_tests/cypress
+
+    # Pasamos secretos como variables CYPRESS_ (Cypress los ve como env)
     env:
       CYPRESS_BASE_URL:  ${{ secrets.CYPRESS_BASE_URL }}
       CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}
       CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
       CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
-    defaults:
-      run:
-        working-directory: crm_tests/cypress
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,15 +38,29 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: crm_tests/cypress/package-lock.json
+          # OJO: sin cache-dependency-path para evitar el error de caché
 
-      - name: Debug env
+      - name: Debug repo layout (carpeta de tests)
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          test -f package.json && echo "OK package.json" || echo "FALTA package.json"
+          test -f package-lock.json && echo "OK package-lock.json" || echo "SIN package-lock.json"
+
+      - name: Instalar dependencias
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Imprimir variables de entorno de Cypress (sanity)
         run: |
           echo "CYPRESS_BASE_URL=${CYPRESS_BASE_URL}"
-          echo "CYPRESS_BASE_PATH=${CYPRESS_BASE_PATH}"
+          echo "CYPRESS_BASE_PATH=${CYPRESS_BASE_PATH:-<vacío>}"
+          echo "CYPRESS_ADMIN_USER=${CYPRESS_ADMIN_USER}"
+          echo "CYPRESS_ADMIN_PASS=***"
 
-      - name: Install deps
-        run: npm ci
-
-      - name: Run smoke
-        run: npx cypress run --browser electron --spec "cypress/e2e/smoke.api.cy.js"
+      - name: Ejecutar smoke tests (headless)
+        run: npx cypress run --browser chrome
