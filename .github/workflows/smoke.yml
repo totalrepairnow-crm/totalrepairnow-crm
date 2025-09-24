@@ -3,42 +3,72 @@ name: Smoke API (Cypress)
 on:
   pull_request:
     branches: [ main ]
+    paths:
+      - "crm_tests/**"
+      - "backend/**"
+      - ".github/workflows/smoke.yml"
+  push:
+    branches: [ main ]
+    paths:
+      - "crm_tests/**"
+      - "backend/**"
+      - ".github/workflows/smoke.yml"
   workflow_dispatch:
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crm_tests/cypress
+
+    env:
+      CYPRESS_BASE_URL:  ${{ secrets.CYPRESS_BASE_URL }}
+      CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}
+      CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
+      CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      # Usa caché SOLO si existe crm_tests/cypress/package-lock.json
+      - name: Setup Node (con caché si hay lockfile)
+        if: ${{ hashFiles('crm_tests/cypress/package-lock.json') != '' }}
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: '20'
           cache: npm
-          cache-dependency-path: tests/smoke/package-lock.json
+          cache-dependency-path: crm_tests/cypress/package-lock.json
 
-      - name: Install dependencies (Cypress project)
-        working-directory: tests/smoke
-        run: npm ci
-
-      - name: Verify Cypress
-        working-directory: tests/smoke
-        run: npx cypress verify
-
-      - name: Run smoke against prod
-        working-directory: tests/smoke
-        env:
-          CYPRESS_BASE_URL: ${{ vars.CYPRESS_BASE_URL }}
-          CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}
-          CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}
-        run: npx cypress run --headless
-
-      - name: Store screenshots on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
+      # Fallback sin caché si NO hay lockfile
+      - name: Setup Node (sin caché)
+        if: ${{ hashFiles('crm_tests/cypress/package-lock.json') == '' }}
+        uses: actions/setup-node@v4
         with:
-          name: cypress-screenshots
-          path: tests/smoke/cypress/screenshots
-          if-no-files-found: ignore
+          node-version: '20'
+
+      - name: Debug layout
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          test -f package.json && echo "OK package.json" || echo "FALTA package.json"
+          test -f package-lock.json && echo "OK package-lock.json" || echo "SIN package-lock.json"
+
+      - name: Instalar deps
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Echo CYPRESS envs
+        run: |
+          echo "CYPRESS_BASE_URL=${CYPRESS_BASE_URL}"
+          echo "CYPRESS_BASE_PATH=${CYPRESS_BASE_PATH:-<vacío>}"
+          echo "CYPRESS_ADMIN_USER=${CYPRESS_ADMIN_USER}"
+          echo "CYPRESS_ADMIN_PASS=***"
+
+      - name: Run smoke
+        run: npx cypress run --browser chrome
