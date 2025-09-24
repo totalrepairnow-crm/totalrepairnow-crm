@@ -1,6 +1,6 @@
 // src/components/NavBar.jsx
 import React from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export default function NavBar() {
@@ -25,14 +25,31 @@ export default function NavBar() {
   };
 
   const brand = { fontWeight: 600, marginRight: 12 };
-  const link = { textDecoration: "none" };
   const btn = { marginLeft: "auto" };
+
+  const linkBase = {
+    textDecoration: "none",
+    padding: "6px 8px",
+    borderRadius: 6,
+    color: "#111827",
+  };
+  const activeStyle = {
+    background: "#eef2ff",
+    color: "#1d4ed8",
+    fontWeight: 600,
+  };
+
+  const linkStyle = ({ isActive }) =>
+    isActive ? { ...linkBase, ...activeStyle } : linkBase;
 
   return (
     <header style={wrap}>
       <span style={brand}>Total Repair Now CRM</span>
-      <Link to="/clients" style={link}>Clients</Link>
-      <Link to="/services" style={link}>Services</Link>
+
+      <NavLink to="/clients" style={linkStyle}>Clients</NavLink>
+      <NavLink to="/services" style={linkStyle}>Services</NavLink>
+      <NavLink to="/invoices" style={linkStyle}>Invoices</NavLink>
+
       <button onClick={doLogout} style={btn}>Logout</button>
     </header>
   );
