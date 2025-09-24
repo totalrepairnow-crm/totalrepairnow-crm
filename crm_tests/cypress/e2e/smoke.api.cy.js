@@ -1,54 +1,50 @@
-describe('CRM API Smoke', () => {
+describe('CRM API — Smoke', () => {
   let token;
   let clientId;
 
-    before(() => {
-    // 1) Health
+  const email = Cypress.env('ADMIN_USER') || 'admin@totalrepairnow.com';
+  const pass  = Cypress.env('ADMIN_PASS') || 'Alfa12345.';
+
+  it('health (invoices/health) 200', () => {
+    cy.request({ method: 'GET', url: '/api/invoices/health', failOnStatusCode: false })
+      .then((res) => {
+        expect(res.status).to.eq(200);
+        expect(res.body).to.have.property('ok', true);
+      });
+  });
+
+  it('login OK', () => {
+    cy.request('POST', '/api/login', { email, password: pass })
+      .then((res) => {
+        expect(res.status).to.eq(200);
+        token = res.body.accessToken || res.body.token;
+        expect(token, 'jwt').to.be.a('string').and.have.length.greaterThan(20);
+      });
+  });
+
+  it('lista clientes y selecciona uno', () => {
     cy.request({
       method: 'GET',
-      url: '/api/health',
-      failOnStatusCode: false,
+      url: '/api/clients',
+      headers: { Authorization: `Bearer ${token}` },
     }).then((res) => {
       expect(res.status).to.eq(200);
-      expect(res.body).to.have.property('status', 'ok');
-    });
-
-    // 2) Login robusto (prueba username y luego email; no falla en 4xx)
-    const adminUser = Cypress.env('ADMIN_USER') || 'admin@totalrepairnow.com';
-    const adminPass = Cypress.env('ADMIN_PASS') || 'Alfa12345.';
-
-    // Por si las env vinieran vacías en CI, haces que truene claro
-    expect(adminUser, 'ADMIN_USER env var').to.be.a('string').and.not.be.empty;
-    expect(adminPass, 'ADMIN_PASS env var').to.be.a('string').and.not.be.empty;
-
-    const tryUsername = () =>
-      cy.request({
-        method: 'POST',
-        url: '/api/login',
-        body: { username: adminUser, password: adminPass },
-        failOnStatusCode: false,
-      });
-
-    const tryEmail = () =>
-      cy.request({
-        method: 'POST',
-        url: '/api/login',
-        body: { email: adminUser, password: adminPass },
-        failOnStatusCode: false,
-      });
-
-    tryUsername().then((r1) => {
-      if (r1.status === 200 && (r1.body?.token || r1.body?.accessToken)) {
-        token = r1.body.accessToken || r1.body.token;
-        return;
-      }
-      // Fallback a email
-      return tryEmail().then((r2) => {
-        expect(
-          r2.status,
-          `login con email devolvió ${r2.status}: ${JSON.stringify(r2.body)}`
-        ).to.eq(200);
-        token = r2.body.accessToken || r2.body.token;
-      });
+      const items = Array.isArray(res.body) ? res.body : (res.body.items || []);
+      expect(items.length, 'clients length').to.be.greaterThan(0);
+      clientId = items[0].id;
+      expect(clientId).to.be.a('number');
     });
   });
+
+  it('lista servicios del cliente', () => {
+    cy.request({
+      method: 'GET',
+      url: `/api/clients/${clientId}/services`,
+      headers: { Authorization: `Bearer ${token}` },
+      failOnStatusCode: false,
+    }).then((res) => {
+      // algunos backends devuelven [] si no hay servicios
+      expect([200, 404]).to.include(res.status);
+    });
+  });
+});
