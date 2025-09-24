@@ -1,30 +1,77 @@
+name: Smoke API (Cypress)
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "crm_tests/cypress/**"
+      - ".github/workflows/smoke.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
 
-    # 👇👇 AÑADE ESTO (mapea tus secrets a env con prefijo CYPRESS_)
+    # ⭐ Aquí mapeamos los secrets → env visibles como Cypress.env('...')
     env:
-      CYPRESS_BASE_URL:  ${{ secrets.CYPRESS_BASE_URL }}   # https://crm.totalrepairnow.com
-      CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}  # api
-      CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}  # admin@totalrepairnow.com
-      CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}  # Alfa12345.
+      CYPRESS_BASE_URL:  ${{ secrets.CYPRESS_BASE_URL }}   # p.ej. https://crm.totalrepairnow.com
+      CYPRESS_BASE_PATH: ${{ secrets.CYPRESS_BASE_PATH }}  # p.ej. api
+      CYPRESS_ADMIN_USER: ${{ secrets.CYPRESS_ADMIN_USER }}  # p.ej. admin@totalrepairnow.com
+      CYPRESS_ADMIN_PASS: ${{ secrets.CYPRESS_ADMIN_PASS }}  # p.ej. Alfa12345.
+
+    defaults:
+      run:
+        working-directory: crm_tests/cypress
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # (opcional) paso de debug para ver que llegaron
-      - name: Debug CYPRESS env
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: crm_tests/cypress/package-lock.json
+
+      - name: Debug env (CYPRESS_*)
         run: |
-          echo "CYPRESS_BASE_URL=$CYPRESS_BASE_URL"
-          echo "CYPRESS_BASE_PATH=$CYPRESS_BASE_PATH"
-          test -n "$CYPRESS_BASE_URL"
-          test -n "$CYPRESS_BASE_PATH"
+          echo "CYPRESS_BASE_URL=${CYPRESS_BASE_URL}"
+          echo "CYPRESS_BASE_PATH=${CYPRESS_BASE_PATH}"
+          test -n "${CYPRESS_BASE_URL}"
+          test -n "${CYPRESS_BASE_PATH}"
 
-      # tu instalación/ejecución actual de Cypress…
-      - name: Install
+      - name: Install deps
         run: npm ci
-        working-directory: crm_tests/cypress   # <-- ajusta si aplica
+
+      - name: Verify Cypress
+        run: npx cypress verify
 
       - name: Run smoke
-        run: npx cypress run --spec "cypress/e2e/smoke.api.cy.js"
-        working-directory: crm_tests/cypress   # <-- ajusta si aplica
+        run: npx cypress run --browser electron --spec "cypress/e2e/smoke.api.cy.js"
+        env:
+          # Evita que warnings de build se traten como errores en CI
+          CI: "true"
+
+      - name: Upload screenshots (on fail)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: crm_tests/cypress/cypress/screenshots
+
+      - name: Upload videos (on fail)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos
+          path: crm_tests/cypress/cypress/videos
