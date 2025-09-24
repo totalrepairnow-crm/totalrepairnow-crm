@@ -1,7 +1,7 @@
-// src/lib/services.js — rutas anidadas por cliente + fallback
+// src/lib/services.js — rutas anidadas con clientId, usando apiFetch
 import { apiFetch } from "./api";
 
-// Helper de querystring (sin dependencias externas)
+// Helper para query strings
 function qs(params = {}) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -11,78 +11,61 @@ function qs(params = {}) {
   return s ? `?${s}` : "";
 }
 
-// --- Resolver cliente por defecto ------------------------------------------
-async function resolveClientId() {
-  let cid = localStorage.getItem("defaultClientId");
-  if (cid && String(cid).trim() !== "") return cid;
+// Intenta resolver un clientId "por defecto" y lo cachea en localStorage
+async function resolveDefaultClientId() {
+  const KEY = "defaultClientId";
+  let id = localStorage.getItem(KEY);
+  if (id) return id;
 
-  // Busca el primer cliente y lo recuerda
-  const list = await apiFetch("/clients"); // <- tu backend ya tiene esta ruta
-  const first = Array.isArray(list) && list.length ? list[0] : null;
-  if (!first || first.id == null) {
-    throw new Error("No clients available to resolve defaultClientId");
-  }
-  cid = String(first.id);
-  localStorage.setItem("defaultClientId", cid);
-  return cid;
+  // Tu API de clientes devuelve array simple (según tus pruebas/Smoke)
+  const list = await apiFetch(`/clients`);
+  const first = Array.isArray(list) ? list[0] : (list?.items?.[0] ?? null);
+  id = first?.id;
+  if (id != null) localStorage.setItem(KEY, String(id));
+  return id;
 }
 
-// --- Services anidados por cliente ------------------------------------------
-
-// Lista servicios del cliente por defecto
-export async function listServices({ q = "", status = "", page = 1, limit = 10 } = {}) {
-  const cid = await resolveClientId();
-  const query = qs({
-    q: q?.trim() || undefined,
-    status: status || undefined,
-    page,
-    limit,
-  });
-  return apiFetch(`/clients/${encodeURIComponent(cid)}/services${query}`);
+function servicesBasePath(clientId) {
+  // Si hay clientId usamos la ruta anidada; si no, caemos a /services (fallback)
+  return clientId
+    ? `/clients/${encodeURIComponent(clientId)}/services`
+    : `/services`;
 }
 
-// Crear servicio para el cliente por defecto
-export async function createService(payload) {
-  const cid = await resolveClientId();
-  return apiFetch(`/clients/${encodeURIComponent(cid)}/services`, {
+// === Endpoints Services ===
+
+export async function listServices({ q = "", status = "", page = 1, limit = 20 } = {}) {
+  const clientId = await resolveDefaultClientId();
+  const base = servicesBasePath(clientId);
+  return apiFetch(`${base}${qs({ q: q?.trim() || undefined, status, page, limit })}`);
+}
+
+export async function getServiceById(id, clientId) {
+  const cid = clientId ?? await resolveDefaultClientId();
+  const base = servicesBasePath(cid);
+  return apiFetch(`${base}/${encodeURIComponent(id)}`);
+}
+
+export async function createService(payload = {}, clientId) {
+  const cid = clientId ?? await resolveDefaultClientId();
+  const base = servicesBasePath(cid);
+  return apiFetch(base, {
     method: "POST",
-    body: JSON.stringify(payload || {}),
+    body: JSON.stringify(payload),
   });
 }
 
-// Detalle de servicio: intenta anidado; si 404, hace fallback a ruta plana.
-export async function getServiceById(serviceId) {
-  const cid = await resolveClientId();
-  try {
-    return await apiFetch(`/clients/${encodeURIComponent(cid)}/services/${encodeURIComponent(serviceId)}`);
-  } catch (e) {
-    // Fallback si tu backend acepta /services/:id
-    return apiFetch(`/services/${encodeURIComponent(serviceId)}`);
-  }
+export async function updateService(id, payload = {}, clientId) {
+  const cid = clientId ?? await resolveDefaultClientId();
+  const base = servicesBasePath(cid);
+  return apiFetch(`${base}/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 }
 
-export async function updateService(serviceId, payload) {
-  const cid = await resolveClientId();
-  try {
-    return await apiFetch(`/clients/${encodeURIComponent(cid)}/services/${encodeURIComponent(serviceId)}`, {
-      method: "PUT",
-      body: JSON.stringify(payload || {}),
-    });
-  } catch {
-    return apiFetch(`/services/${encodeURIComponent(serviceId)}`, {
-      method: "PUT",
-      body: JSON.stringify(payload || {}),
-    });
-  }
-}
-
-export async function deleteService(serviceId) {
-  const cid = await resolveClientId();
-  try {
-    return await apiFetch(`/clients/${encodeURIComponent(cid)}/services/${encodeURIComponent(serviceId)}`, {
-      method: "DELETE",
-    });
-  } catch {
-    return apiFetch(`/services/${encodeURIComponent(serviceId)}`, { method: "DELETE" });
-  }
+export async function deleteService(id, clientId) {
+  const cid = clientId ?? await resolveDefaultClientId();
+  const base = servicesBasePath(cid);
+  return apiFetch(`${base}/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
