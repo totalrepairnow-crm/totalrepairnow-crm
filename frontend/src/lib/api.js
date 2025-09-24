@@ -217,30 +217,69 @@ export async function deleteUser(id) {
 }
 
 // ===== Services =====
-export async function listServices() {
-  const resp = await apiFetch("/services");
+// En este CRM los servicios pertenecen a un cliente: /clients/:id/services
+
+// Cómo resolvemos el clientId si la vista no lo pasa explícitamente.
+// Puedes cambiar esta lógica cuando tengas un selector de cliente:
+function resolveClientId(explicitId) {
+  const fromLs = Number(localStorage.getItem("defaultClientId"));
+  return Number(explicitId || fromLs || 13); // 13 como fallback
+}
+
+export async function listServices({
+  clientId,
+  q = "",
+  status = "",
+  page = 1,
+  limit = 10,
+} = {}) {
+  const cid = resolveClientId(clientId);
+
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (status) params.set("status", status);
+  if (page) params.set("page", String(page));
+  if (limit) params.set("limit", String(limit));
+
+  const path = `/clients/${cid}/services${params.toString() ? `?${params.toString()}` : ""}`;
+  const resp = await apiFetch(path);
   return jsonOrThrow(resp);
 }
 
-export async function getService(id) {
-  const resp = await apiFetch(`/services/${id}`);
+export async function getService(id, { clientId } = {}) {
+  const cid = resolveClientId(clientId);
+  const resp = await apiFetch(`/clients/${cid}/services/${id}`);
   return jsonOrThrow(resp);
 }
 
-export async function createService(payload) {
-  const resp = await apiFetch("/services", { method: "POST", body: payload });
+export async function createService(payload, { clientId } = {}) {
+  const cid = resolveClientId(clientId);
+  const resp = await apiFetch(`/clients/${cid}/services`, {
+    method: "POST",
+    body: payload,
+  });
   return jsonOrThrow(resp);
 }
 
-export async function updateService(id, payload) {
-  const resp = await apiFetch(`/services/${id}`, { method: "PUT", body: payload });
+export async function updateService(id, payload, { clientId } = {}) {
+  const cid = resolveClientId(clientId);
+  const resp = await apiFetch(`/clients/${cid}/services/${id}`, {
+    method: "PUT",
+    body: payload,
+  });
   return jsonOrThrow(resp);
 }
 
-export async function deleteService(id) {
-  const resp = await apiFetch(`/services/${id}`, { method: "DELETE" });
+export async function deleteService(id, { clientId } = {}) {
+  const cid = resolveClientId(clientId);
+  const resp = await apiFetch(`/clients/${cid}/services/${id}`, {
+    method: "DELETE",
+  });
   return jsonOrThrow(resp);
 }
+
+// Alias por compatibilidad (si alguien lo usa)
+export const createServiceForClient = createService;
 
 // Alias por compatibilidad
 export const createServiceForClient = createService;
