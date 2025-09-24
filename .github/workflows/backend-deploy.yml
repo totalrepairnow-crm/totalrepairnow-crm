@@ -1,37 +1,122 @@
-name: Backend Deploy
+name: Backend CI/CD (Node API)
 
 on:
-  push:
-    branches: [ "main" ]
+  pull_request:
+    branches: [ main ]
     paths:
       - "backend/**"
       - ".github/workflows/backend-deploy.yml"
+  push:
+    branches: [ main ]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+
+env:
+  BACKEND_DIR: /home/crmadmin/crm_app/backend
+  SERVICE: crm-backend
 
 jobs:
-  deploy:
+  # PR: solo lint/build (no deploy)
+  build_and_test:
+    name: Lint & Build (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+      - name: Install deps
+        run: npm ci
+      - name: Sanity build
+        run: node -e "console.log('backend ok')"
+
+  # Push/Dispatch: deploy
+  deploy_prod:
+    name: Deploy & restart service
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup SSH
+      # --- Parseo robusto de host[:port] + limpieza de espacios/nl ---
+      - name: Parse SSH host[:port]
+        id: host
+        shell: bash
+        run: |
+          raw="${{ secrets.SSH_HOST }}"
+          raw="$(printf '%s' "$raw" | tr -d '\r\n' | xargs)"  # trim
+          if [[ -z "$raw" ]]; then
+            echo "SSH_HOST vacío" >&2; exit 1
+          fi
+          if [[ "$raw" == *:* ]]; then
+            host="${raw%:*}"
+            port="${raw##*:}"
+          else
+            host="$raw"
+            port="${{ secrets.SSH_PORT }}"
+          fi
+          # default puerto si sigue vacío
+          [[ -z "$port" ]] && port=22
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "port=$port" >> "$GITHUB_OUTPUT"
+          echo "Usando host=$host port=$port"
+
+      - name: Start ssh-agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Add host to known_hosts
+      - name: Known hosts
+        shell: bash
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -T 10 -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -T 10 -H "${{ steps.host.outputs.host }}" >> ~/.ssh/known_hosts
           wc -l ~/.ssh/known_hosts
 
-      - name: Rsync backend to server
+      - name: Rsync backend sources
+        working-directory: backend
+        shell: bash
         run: |
+          HOST="${{ steps.host.outputs.host }}"
+          PORT="${{ steps.host.outputs.port }}"
+          USER="${{ secrets.SSH_USER }}"
           rsync -az --delete \
-            -e "ssh -p ${{ secrets.DEPLOY_PORT || '22' }}" \
-            ./backend/ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/crmadmin/crm_app/backend/
+            -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+            ./ "$USER@$HOST:${{ env.BACKEND_DIR }}/"
+
+      - name: Install prod deps on server
+        shell: bash
+        run: |
+          HOST="${{ steps.host.outputs.host }}"
+          PORT="${{ steps.host.outputs.port }}"
+          USER="${{ secrets.SSH_USER }}"
+          ssh -p "$PORT" "$USER@$HOST" '
+            set -euo pipefail
+            cd '"$BACKEND_DIR"' &&
+            npm ci --omit=dev
+          '
 
       - name: Restart service
+        shell: bash
         run: |
-          ssh -p ${{ secrets.DEPLOY_PORT || '22' }} ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-            "sudo systemctl restart crm-backend && sleep 2 && systemctl is-active crm-backend"
+          HOST="${{ steps.host.outputs.host }}"
+          PORT="${{ steps.host.outputs.port }}"
+          USER="${{ secrets.SSH_USER }}"
+          ssh -p "$PORT" "$USER@$HOST" '
+            sudo systemctl restart '"$SERVICE"' &&
+            sleep 1 &&
+            sudo systemctl status '"$SERVICE"' --no-pager -l | head -n 40
+          '
+
+      - name: Smoke /api/invoices/health
+        run: |
+          curl -fsS -D - "https://${{ steps.host.outputs.host }}/api/invoices/health" -o /dev/null | sed -n '1,12p'
