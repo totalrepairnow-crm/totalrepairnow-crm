@@ -1,8 +1,9 @@
-// src/lib/services.js — alineado a tu api actual (usa apiFetch con paths relativos)
-// No requiere cambiar src/lib/api.js
+// src/lib/services.js
+// Alineado a API anidada: /clients/:id/services
+// Sigue usando apiFetch (que ya antepone /api)
 import { apiFetch } from "./api";
 
-// Helper pequeño para query strings (evita dependencias a joinQs interno si no está exportado)
+// ---- Helpers ----
 function qs(params = {}) {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
@@ -12,33 +13,84 @@ function qs(params = {}) {
   return s ? `?${s}` : "";
 }
 
-// === Endpoints Services ===
-// Mantengo los nombres que usan tus pages ServiceDetail/ServiceNew
-export async function getServiceById(id) {
-  // OJO: tu apiFetch ya pone el prefijo /api, así que aquí NO lo agregamos
-  return apiFetch(`/services/${encodeURIComponent(id)}`);
+// Resuelve y cachea un clientId por defecto (primer cliente)
+async function resolveClientId(passed) {
+  if (passed) return passed;
+  const cached = localStorage.getItem("defaultClientId");
+  if (cached) return cached;
+
+  const clients = await apiFetch(`/clients`);
+  const cid = clients?.[0]?.id;
+  if (cid) localStorage.setItem("defaultClientId", String(cid));
+  return cid;
 }
 
-export async function createService(payload) {
-  return apiFetch(`/services`, {
+// ---- Endpoints Services ----
+
+// 1) LISTADO (usa ruta anidada)
+export async function listServices({ clientId, q = "", status = "", page = 1, limit = 20 } = {}) {
+  const cid = await resolveClientId(clientId);
+  if (!cid) return []; // No hay clientes aún
+  return apiFetch(
+    `/clients/${encodeURIComponent(cid)}/services${qs({
+      q: q?.trim() || undefined,
+      status,
+      page,
+      limit,
+    })}`,
+  );
+}
+
+// 2) CREAR (usa ruta anidada)
+export async function createService(payload, { clientId } = {}) {
+  const cid = await resolveClientId(clientId);
+  if (!cid) throw new Error("No default client id available to create service.");
+  return apiFetch(`/clients/${encodeURIComponent(cid)}/services`, {
     method: "POST",
     body: JSON.stringify(payload || {}),
   });
 }
 
-// (Opcional) útil para listado si lo necesitas en Services.jsx
-export async function listServices({ q = "", status = "", page = 1, limit = 20 } = {}) {
-  return apiFetch(`/services${qs({ q: q?.trim() || undefined, status, page, limit })}`);
+// 3) OBTENER POR ID
+//   - Fast path: /services/:id si existe
+//   - Fallback:  /clients/:cid/services/:id
+export async function getServiceById(id, { clientId } = {}) {
+  const sid = encodeURIComponent(id);
+  try {
+    return await apiFetch(`/services/${sid}`);
+  } catch (e) {
+    const cid = await resolveClientId(clientId);
+    if (!cid) throw e;
+    return apiFetch(`/clients/${encodeURIComponent(cid)}/services/${sid}`);
+  }
 }
 
-// (Opcional) update/delete por si tus pantallas lo usan después
-export async function updateService(id, payload) {
-  return apiFetch(`/services/${encodeURIComponent(id)}`, {
-    method: "PUT",
-    body: JSON.stringify(payload || {}),
-  });
+// 4) ACTUALIZAR POR ID (mismo patrón)
+export async function updateService(id, payload, { clientId } = {}) {
+  const sid = encodeURIComponent(id);
+  try {
+    return await apiFetch(`/services/${sid}`, {
+      method: "PUT",
+      body: JSON.stringify(payload || {}),
+    });
+  } catch (e) {
+    const cid = await resolveClientId(clientId);
+    if (!cid) throw e;
+    return apiFetch(`/clients/${encodeURIComponent(cid)}/services/${sid}`, {
+      method: "PUT",
+      body: JSON.stringify(payload || {}),
+    });
+  }
 }
 
-export async function deleteService(id) {
-  return apiFetch(`/services/${encodeURIComponent(id)}`, { method: "DELETE" });
+// 5) ELIMINAR POR ID (mismo patrón)
+export async function deleteService(id, { clientId } = {}) {
+  const sid = encodeURIComponent(id);
+  try {
+    return await apiFetch(`/services/${sid}`, { method: "DELETE" });
+  } catch (e) {
+    const cid = await resolveClientId(clientId);
+    if (!cid) throw e;
+    return apiFetch(`/clients/${encodeURIComponent(cid)}/services/${sid}`, { method: "DELETE" });
+  }
 }
