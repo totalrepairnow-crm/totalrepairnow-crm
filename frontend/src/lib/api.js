@@ -146,7 +146,6 @@ export async function listClients(q = "", page = 1, limit = 50) {
   const resp = await apiFetch(path);
   const data = await jsonOrThrow(resp);
   if (Array.isArray(data)) return data;
-  // preserva el payload completo por si lo necesita otra vista
   return data.items || [];
 }
 
@@ -219,28 +218,18 @@ export async function deleteUser(id) {
 // ===== Services =====
 // En este CRM los servicios pertenecen a un cliente: /clients/:id/services
 
-// Cómo resolvemos el clientId si la vista no lo pasa explícitamente.
-// Puedes cambiar esta lógica cuando tengas un selector de cliente:
 function resolveClientId(explicitId) {
   const fromLs = Number(localStorage.getItem("defaultClientId"));
-  return Number(explicitId || fromLs || 13); // 13 como fallback
+  return Number(explicitId || fromLs || 13); // Fallback temporal
 }
 
-export async function listServices({
-  clientId,
-  q = "",
-  status = "",
-  page = 1,
-  limit = 10,
-} = {}) {
+export async function listServices({ clientId, q = "", status = "", page = 1, limit = 10 } = {}) {
   const cid = resolveClientId(clientId);
-
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (status) params.set("status", status);
   if (page) params.set("page", String(page));
   if (limit) params.set("limit", String(limit));
-
   const path = `/clients/${cid}/services${params.toString() ? `?${params.toString()}` : ""}`;
   const resp = await apiFetch(path);
   return jsonOrThrow(resp);
@@ -278,10 +267,7 @@ export async function deleteService(id, { clientId } = {}) {
   return jsonOrThrow(resp);
 }
 
-// Alias por compatibilidad (si alguien lo usa)
-export const createServiceForClient = createService;
-
-// Alias por compatibilidad
+// Alias por compatibilidad (solo una vez)
 export const createServiceForClient = createService;
 
 // ===== Invoices =====
@@ -311,7 +297,6 @@ export async function openInvoicePDF(id) {
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   const w = window.open(url, "_blank");
-  // Sugerencia de nombre en la pestaña si el navegador lo permite
   const dispo = resp.headers.get("Content-Disposition") || "";
   const m = dispo.match(/filename="?(.*?)"?$/i);
   if (w && m && m[1]) {
